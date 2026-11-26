@@ -30,6 +30,10 @@ rewrite() {
     sed -E \
         -e 's#^FROM ([^ ]+ )?(node|golang|debian|nginx):#FROM \1'"${MIRROR}"'/\2:#' \
         -e 's#@sha256:[0-9a-f]{64}##g' \
+        -e 's#apt-get install#apt-get -o Acquire::Retries=6 -o Acquire::http::Timeout=30 install#g' \
+        -e 's#^RUN if #RUN --mount=type=cache,target=/var/cache/apt/archives if #' \
+        -e 's#apt-get clean#true#g' \
+        -e 's#go run cmd/download/duckdb/duckdb.go#go run cmd/download/duckdb/duckdb.go || echo "[build-local] duckdb ext preload skipped"#' \
         "$src" > "$dst"
     echo "--- $dst 的基础镜像 ---"
     grep -E "^FROM" "$dst"

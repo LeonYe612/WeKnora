@@ -24,6 +24,11 @@ MIRROR="${MIRROR:-docker.m.daocloud.io/library}"
 TARGET="${1:-all}"
 BUILD_PROXY="${BUILD_PROXY:-http://http.docker.internal:3128}"
 NO_PROXY_LIST="localhost,127.0.0.1,docker.internal,goproxy.cn,mirrors.aliyun.com,registry.npmjs.org,registry.npmmirror.com"
+# 精简 runtime 依赖：本机到 apt 源实测 117-402 KB/s，上游要下 250MB+，
+# 必然超时。SLIM=1 时去掉 vim/wget/nodejs/npm/ffmpeg/mysql-client，
+# 只保留运行时必需项（tzdata/curl/bash/gosu/libsqlite3/python3/build-essential）。
+# 代价：镜像不含 ffmpeg/nodejs，音视频解析与 JS 工具链不可用。
+SLIM="${SLIM:-1}"
 
 rewrite() {
     local src="$1" dst="$2"
@@ -35,6 +40,37 @@ rewrite() {
         -e 's#apt-get clean#true#g' \
         -e 's#go run cmd/download/duckdb/duckdb.go#go run cmd/download/duckdb/duckdb.go || echo "[build-local] duckdb ext preload skipped"#' \
         "$src" > "$dst"
+
+    if [ "$SLIM" = "1" ]; then
+        python - "$dst" <<'PYEOF'
+import io, sys
+p = sys.argv[1]
+lines = io.open(p, encoding='utf-8').read().split('\n')
+out, hit = [], 0
+for line in lines:
+    s = line.strip()
+    if 'postgresql-client default-mysql-client' in line and 'build-essential' in line:
+        out.append('        build-essential tzdata sed curl bash \\')
+        hit += 1
+        continue
+    if s == 'nodejs npm \\':
+        hit += 1
+        continue
+    if s == 'gosu \\':
+        continue
+    if s == 'ffmpeg qpdf && \\':
+        out.append('        gosu && \\')
+        hit += 1
+        continue
+    out.append(line)
+if hit >= 2:
+    io.open(p, 'w', encoding='utf-8').write('\n'.join(out))
+    print("--- runtime apt list slimmed (%d edits) ---" % hit)
+else:
+    print("--- WARN: runtime apt list not matched (%d edits), keeping full set ---" % hit)
+PYEOF
+    fi
+
     echo "--- $dst 的基础镜像 ---"
     grep -E "^FROM" "$dst"
 }

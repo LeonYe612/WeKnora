@@ -1,0 +1,30 @@
+# 本部署声明的内置模型（对所有 tenant 可见，is_builtin=true）。
+#
+# 与上游 config/builtin_models.yaml.example 的差异只有一处：不声明 gpt-4o-mini。
+# 那个条目用的是占位 api_key，在本机部署下不可用，留着只会在模型列表里造成误导。
+# 其余字段完全对齐新版 example 的写法（env 间接引用 + dimension 字面量）。
+#
+# 注意：此文件每次 app 启动都会重新应用；从文件里删掉的条目不会自动从数据库删除。
+builtin_models:
+  - id: builtin-embedding-default
+    type: Embedding
+    source: remote
+    is_default: true
+    name: ${EMBEDDING_MODEL_NAME}
+    parameters:
+      base_url: ${EMBEDDING_BASE_URL}
+      api_key: ${EMBEDDING_API_KEY}
+      provider: ${EMBEDDING_PROVIDER}
+      embedding_parameters:
+        dimension: 1024
+        truncate_prompt_tokens: 0
+
+  - id: builtin-rerank-default
+    type: Rerank
+    source: remote
+    is_default: true
+    name: ${RERANK_MODEL_NAME}
+    parameters:
+      base_url: ${RERANK_BASE_URL}
+      api_key: ${RERANK_API_KEY}
+      provider: ${RERANK_PROVIDER}

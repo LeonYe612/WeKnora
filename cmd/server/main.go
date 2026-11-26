@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -39,6 +40,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/handler"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/runtime"
+	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
@@ -54,6 +56,9 @@ func main() {
 	// Dotenv loading happens after the logger package initialized, so
 	// re-apply file-based LOG_LEVEL / LOG_PATH (mirrors cmd/desktop).
 	logger.ConfigureFromEnv()
+	// [local] 新建知识库是否默认启用知识图谱/实体抽取。
+	// 默认 false（与上游一致）；私有化部署需要"建库即抽图"时设 DEFAULT_GRAPH_ENABLED=true。
+	types.SetDefaultGraphEnabled(strings.EqualFold(os.Getenv("DEFAULT_GRAPH_ENABLED"), "true"))
 	// Set Gin mode
 	if os.Getenv("GIN_MODE") == "release" {
 		gin.SetMode(gin.ReleaseMode)

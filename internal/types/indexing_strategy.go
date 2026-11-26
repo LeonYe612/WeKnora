@@ -3,6 +3,7 @@ package types
 import (
 	"database/sql/driver"
 	"encoding/json"
+	"sync/atomic"
 )
 
 // IndexingStrategy controls which indexing pipelines are active for a knowledge base.
@@ -19,6 +20,15 @@ type IndexingStrategy struct {
 	GraphEnabled bool `yaml:"graph_enabled" json:"graph_enabled" extensions:"x-agent"`
 }
 
+// defaultGraphEnabled 决定新建知识库是否默认开启知识图谱。
+// 默认 false，与上游行为完全一致；仅当部署侧显式设置 DEFAULT_GRAPH_ENABLED=true
+// 时由 SetDefaultGraphEnabled 打开。做成运行时开关而不是改死默认值，是为了
+// 让本部署的定制与上游保持零语义分叉（merge 时不会产生冲突，也随时可回退）。
+var defaultGraphEnabled atomic.Bool
+
+// SetDefaultGraphEnabled 由启动流程依据 DEFAULT_GRAPH_ENABLED 调用。
+func SetDefaultGraphEnabled(v bool) { defaultGraphEnabled.Store(v) }
+
 // DefaultIndexingStrategy returns the default strategy matching the legacy behavior:
 // vector and keyword indexing enabled, wiki and graph disabled.
 func DefaultIndexingStrategy() IndexingStrategy {
@@ -26,7 +36,7 @@ func DefaultIndexingStrategy() IndexingStrategy {
 		VectorEnabled:  true,
 		KeywordEnabled: true,
 		WikiEnabled:    false,
-		GraphEnabled:   false,
+		GraphEnabled:   defaultGraphEnabled.Load(),
 	}
 }
 

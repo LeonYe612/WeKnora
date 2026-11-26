@@ -953,6 +953,12 @@ watch(
 )
 
 // 初始化表单数据
+// [local] 新建知识库是否默认启用知识图谱/实体抽取。
+// 默认 false（与上游一致）；私有化部署需要"建库即抽图"时设 VITE_DEFAULT_GRAPH_ENABLED=true。
+// 与后端 DEFAULT_GRAPH_ENABLED 保持语义一致，但不改死默认值，merge 上游零冲突。
+const DEFAULT_GRAPH_ENABLED =
+  (import.meta.env as Record<string, string | undefined>).VITE_DEFAULT_GRAPH_ENABLED === 'true'
+
 const initFormData = (type: 'document' | 'faq' = 'document') => {
   return {
     type,
@@ -1012,7 +1018,7 @@ const initFormData = (type: 'document' | 'faq' = 'document') => {
       language: ''
     },
     nodeExtractConfig: {
-      enabled: false,
+      enabled: DEFAULT_GRAPH_ENABLED,
       text: '',
       tags: [] as string[],
       nodes: [] as Array<{
@@ -1055,7 +1061,7 @@ const initFormData = (type: 'document' | 'faq' = 'document') => {
       vectorEnabled: true,
       keywordEnabled: true,
       wikiEnabled: false,
-      graphEnabled: false,
+      graphEnabled: DEFAULT_GRAPH_ENABLED,
     },
     // Vector-store binding. Empty string means "use the env-configured
     // store"; create mode defaults to that, edit mode loads the

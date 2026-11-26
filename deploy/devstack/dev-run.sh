@@ -10,6 +10,11 @@ set -u
 APP_BIN=/tmp/air/WeKnora
 WATCH_DIRS="/app/internal /app/cmd"
 POLL_SECONDS=${POLL_SECONDS:-2}
+# 宿主机 watcher 探测到 .go 变化后 touch 此文件。
+# 原因：Windows→容器的 bind mount(9p/virtiofs) 覆盖写只同步数据、不同步 mtime，
+# 所以容器内 stat/find 看不到宿主机编辑器的保存；inotify 也完全不触发。
+# 由 devstack-watch.ps1 在 Windows 侧用 FileSystemWatcher 捕获事件后显式 touch。
+TRIGGER=/tmp/reload-trigger
 
 mkdir -p /tmp/air
 
@@ -30,6 +35,9 @@ build_and_start() {
 }
 
 needs_rebuild() {
+    if [ -f "$TRIGGER" ] && [ "$TRIGGER" -nt "$APP_BIN" ]; then
+        return 0
+    fi
     for d in $WATCH_DIRS; do
         if [ -n "$(find "$d" -name '*.go' -newer "$APP_BIN" -print -quit 2>/dev/null)" ]; then
             return 0

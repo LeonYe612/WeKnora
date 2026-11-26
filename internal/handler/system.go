@@ -2100,6 +2100,57 @@ func (h *SystemHandler) ListRuntimeTasks(c *gin.Context) {
 	h.listRuntimeTasks(c, types.RuntimeTaskState(c.Query("state")))
 }
 
+// ListAllRuntimeTasks returns one merged page of a task state across every
+// queue, busiest queue first, for the unified operator console. Raw task
+// payloads are never included.
+// @Summary      跨队列查询任务（List runtime tasks across queues）
+// @Tags         System Admin
+// @Produce      json
+// @Param        state query string true "Task state" Enums(pending,active,scheduled,retry,archived,completed) extensions(x-agent)
+// @Param        queue query string false "Restrict to one queue; empty means all queues" extensions(x-agent)
+// @Param        page_size query int false "Page size" default(20) minimum(1) maximum(100) extensions(x-agent,x-agent-maximum=50)
+// @Success      200 {object} RuntimeTasksResponse
+// @x-agent {"id":"system_admin.list_all_tasks","risk":"read","system_admin":true,"root":"tasks","max_items":50}
+// @x-agent-hint "Lists tasks in one state across all queues, busiest queue first; each task carries its queue. has_more means deeper pages exist — drill into system_admin.list_tasks with the task's queue for continuation. available false means unsupported. This operation cannot retry, cancel or delete tasks."
+// @Router       /system/admin/runtime/tasks [get]
+func (h *SystemHandler) ListAllRuntimeTasks(c *gin.Context) {
+	state := types.RuntimeTaskState(c.Query("state"))
+	if !state.Valid() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown task state"})
+		return
+	}
+	queue := c.Query("queue")
+	if queue != "" && !isKnownRuntimeQueue(queue) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown task queue"})
+		return
+	}
+	pageSize := runtimeTaskPageSize(c)
+	inspector, ok := h.taskInspector.(interfaces.RuntimeTaskInspector)
+	if !ok {
+		c.JSON(http.StatusOK, RuntimeTasksResponse{
+			Available: false,
+			Tasks:     []types.RuntimeTaskInfo{},
+			PageSize:  pageSize,
+		})
+		return
+	}
+	page, supported, err := inspector.ListAllRuntimeTasks(c.Request.Context(), queue, state, pageSize)
+	if err != nil {
+		logger.Errorf(c.Request.Context(), "list runtime tasks across queues state=%s queue=%s: %v", state, queue, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list queue tasks"})
+		return
+	}
+	for i := range page.Tasks {
+		page.Tasks[i].ErrorCategory = runtimeErrorCategory(page.Tasks[i].LastError)
+	}
+	c.JSON(http.StatusOK, RuntimeTasksResponse{
+		Available: supported,
+		Tasks:     page.Tasks,
+		PageSize:  pageSize,
+		HasMore:   page.HasMore,
+	})
+}
+
 func (h *SystemHandler) emitQueueTaskAudit(
 	ctx context.Context,
 	action types.AuditAction,

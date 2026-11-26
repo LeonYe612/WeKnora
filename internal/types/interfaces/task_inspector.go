@@ -113,6 +113,17 @@ type RuntimeTaskInspector interface {
 		cursor string,
 		pageSize int,
 	) (page types.RuntimeTaskPage, supported bool, err error)
+	// ListAllRuntimeTasks merges the first page of one state across every
+	// known queue (empty queue = all queues) for the cross-queue operator
+	// console. Queues are ordered by the requested state's depth, so the
+	// busiest backlog surfaces first; per-queue continuation uses
+	// ListRuntimeTasks.
+	ListAllRuntimeTasks(
+		ctx context.Context,
+		queue string,
+		state types.RuntimeTaskState,
+		pageSize int,
+	) (page types.RuntimeTaskPage, supported bool, err error)
 	GetRuntimeTask(ctx context.Context, queue, taskID string) (task *types.RuntimeTaskInfo, supported bool, err error)
 	RunRuntimeTask(ctx context.Context, queue, taskID string) (supported bool, err error)
 	DeleteRuntimeTask(ctx context.Context, queue, taskID string) (supported bool, err error)

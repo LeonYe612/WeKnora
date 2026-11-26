@@ -272,6 +272,65 @@ func TestListRuntimeTasksPaginatesNewestPendingTasksWithoutOverlap(t *testing.T)
 	}
 }
 
+func TestListAllRuntimeTasksSurfacesBusiestQueueFirst(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	asynqClient := asynq.NewClientFromRedisClient(client)
+	inspector := &asynqTaskInspector{
+		inspector: asynq.NewInspectorFromRedisClient(client),
+		redis:     client,
+	}
+
+	payload := []byte(`{"tenant_id":1,"knowledge_id":"knowledge-1"}`)
+	for _, id := range []string{"default-1", "default-2"} {
+		if _, err := asynqClient.Enqueue(
+			asynq.NewTask(types.TypeDocumentProcess, payload),
+			asynq.Queue(types.QueueDefault), asynq.TaskID(id),
+		); err != nil {
+			t.Fatalf("enqueue %s: %v", id, err)
+		}
+	}
+	for _, id := range []string{"graph-1", "graph-2", "graph-3", "graph-4"} {
+		if _, err := asynqClient.Enqueue(
+			asynq.NewTask(types.TypeChunkExtract, payload),
+			asynq.Queue(types.QueueGraph), asynq.TaskID(id),
+		); err != nil {
+			t.Fatalf("enqueue %s: %v", id, err)
+		}
+	}
+
+	page, supported, err := inspector.ListAllRuntimeTasks(
+		context.Background(), "", types.RuntimeTaskPending, 3,
+	)
+	if err != nil || !supported {
+		t.Fatalf("merged page: supported=%v err=%v", supported, err)
+	}
+	if len(page.Tasks) != 3 || !page.HasMore {
+		t.Fatalf("unexpected merged page: %+v", page)
+	}
+	for _, task := range page.Tasks {
+		if task.Queue != types.QueueGraph {
+			t.Fatalf("busiest queue must come first, got %s (%s)", task.Queue, task.ID)
+		}
+	}
+
+	scoped, supported, err := inspector.ListAllRuntimeTasks(
+		context.Background(), types.QueueDefault, types.RuntimeTaskPending, 10,
+	)
+	if err != nil || !supported {
+		t.Fatalf("scoped page: supported=%v err=%v", supported, err)
+	}
+	if len(scoped.Tasks) != 2 || scoped.HasMore {
+		t.Fatalf("queue filter must restrict fan-out: %+v", scoped)
+	}
+	for _, task := range scoped.Tasks {
+		if task.Queue != types.QueueDefault {
+			t.Fatalf("scoped page leaked queue %s", task.Queue)
+		}
+	}
+}
+
 func runtimeTaskIDs(tasks []types.RuntimeTaskInfo) []string {
 	ids := make([]string, 0, len(tasks))
 	for _, task := range tasks {

@@ -253,6 +253,16 @@ curl $BASE/api/v1/system/admin/runtime/queues -H "Authorization: Bearer $TOKEN"
 curl "$BASE/api/v1/system/admin/runtime/queues/default/tasks?state=pending" -H "Authorization: Bearer $TOKEN"
 ```
 
+### GET /api/v1/system/admin/runtime/tasks
+
+用途：跨队列任务首页（全局任务台）。查询参数：`state`（同上）、`queue`（可选，限定单队列）、`page_size`（默认 20，上限 100）。按该状态积压深度从大到小遍历队列拼接首页；每条任务自带 `queue` 字段。`has_more:true` 表示还有更深页，续读用单队列接口按任务所属队列游标分页。
+
+响应：200 `{"available","tasks":[RuntimeTaskInfo],"page_size","has_more"}`（无 `next_cursor`）
+
+```bash
+curl "$BASE/api/v1/system/admin/runtime/tasks?state=pending&page_size=50" -H "Authorization: Bearer $TOKEN"
+```
+
 ### POST /api/v1/system/admin/runtime/queues/:queue/tasks/:task_id/actions/:action
 
 用途：任务操作（`action` ∈ `cancel/run_now/delete`；平台 key 需 `system_runtime_manage`）。

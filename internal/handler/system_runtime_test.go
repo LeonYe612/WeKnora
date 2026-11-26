@@ -98,6 +98,8 @@ type runtimeTaskTestInspector struct {
 	cancelKnowledge     string
 	cancelDeleted       int
 	mutatedQueue        string
+	allQueuesInput      string
+	allStatesInput      types.RuntimeTaskState
 	nextCursor          string
 	hasMore             bool
 	inputCursor         string
@@ -158,6 +160,18 @@ func (r *runtimeTaskTestInspector) ListRuntimeTasks(
 	return types.RuntimeTaskPage{
 		Tasks: r.tasks, NextCursor: r.nextCursor, HasMore: r.hasMore,
 	}, true, nil
+}
+
+func (r *runtimeTaskTestInspector) ListAllRuntimeTasks(
+	_ context.Context, queue string, state types.RuntimeTaskState, pageSize int,
+) (types.RuntimeTaskPage, bool, error) {
+	r.inputPageSize = pageSize
+	r.allQueuesInput = queue
+	r.allStatesInput = state
+	if r.listErr != nil {
+		return types.RuntimeTaskPage{}, true, r.listErr
+	}
+	return types.RuntimeTaskPage{Tasks: r.tasks, HasMore: r.hasMore}, true, nil
 }
 
 func (r *runtimeTaskTestInspector) GetRuntimeTask(
@@ -327,6 +341,57 @@ func TestListRuntimeTasksReturnsSafeTaskDetails(t *testing.T) {
 	}
 	if response.Tasks[0].KnowledgeID != "knowledge-1" || response.Tasks[0].LastError != "model unavailable" {
 		t.Fatalf("task details missing: %+v", response.Tasks[0])
+	}
+}
+
+func TestListAllRuntimeTasksMergesQueues(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	inspector := &runtimeTaskTestInspector{
+		tasks: []types.RuntimeTaskInfo{
+			{ID: "task-graph", Queue: types.QueueGraph, Type: types.TypeChunkExtract, State: types.RuntimeTaskPending},
+			{ID: "task-doc", Queue: types.QueueDefault, Type: types.TypeDocumentProcess, State: types.RuntimeTaskPending},
+		},
+		hasMore: true,
+	}
+	handler := &SystemHandler{taskInspector: inspector}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/v1/system/admin/runtime/tasks?state=pending&page_size=50", nil)
+
+	handler.ListAllRuntimeTasks(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response RuntimeTasksResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !response.Available || len(response.Tasks) != 2 || !response.HasMore {
+		t.Fatalf("unexpected response: %+v", response)
+	}
+	if response.Tasks[0].Queue != types.QueueGraph || response.Tasks[1].Queue != types.QueueDefault {
+		t.Fatalf("merged tasks must keep their queue: %+v", response.Tasks)
+	}
+	if inspector.allQueuesInput != "" || inspector.allStatesInput != types.RuntimeTaskPending || inspector.inputPageSize != 50 {
+		t.Fatalf("fan-out inputs not forwarded: queue=%q state=%q pageSize=%d",
+			inspector.allQueuesInput, inspector.allStatesInput, inspector.inputPageSize)
+	}
+}
+
+func TestListAllRuntimeTasksRejectsUnknownStateAndQueue(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := &SystemHandler{taskInspector: &runtimeTaskTestInspector{}}
+	for _, target := range []string{
+		"/api/v1/system/admin/runtime/tasks?state=bogus",
+		"/api/v1/system/admin/runtime/tasks?state=pending&queue=bogus",
+	} {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodGet, target, nil)
+		handler.ListAllRuntimeTasks(ctx)
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("%s: status = %d, want 400", target, recorder.Code)
+		}
 	}
 }
 

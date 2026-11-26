@@ -281,6 +281,7 @@ stateDiagram-v2
 | --- | --- | --- |
 | GET | `/api/v1/system/admin/runtime/queues` | 队列深度快照 + worker 心跳 |
 | GET | `/api/v1/system/admin/runtime/queues/:queue/tasks` | 按状态游标分页任务列表 |
+| GET | `/api/v1/system/admin/runtime/tasks` | 跨队列首页（按状态深度降序拼接，全局任务台；续读走单队列接口） |
 | POST | `/api/v1/system/admin/runtime/queues/:queue/tasks/:task_id/actions/:action` | `cancel` / `run_now` / `delete`（写平台审计） |
 | DELETE | `/api/v1/system/admin/runtime/queues/:queue/archived` | 清空 archived（写平台审计 `system.queue_archived_purged`） |
 

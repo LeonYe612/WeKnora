@@ -194,6 +194,21 @@ export default {
           title: '{count} failed tasks need attention',
           description: 'Open a red Failed count in the table below to inspect causes, then retry after fixing the root issue.'
         },
+        console: {
+          tab: 'Task console',
+          queueFilter: 'Filter by queue',
+          allQueues: 'All queues',
+          bulkScope: '{count} loaded tasks are actionable (bulk applies to the loaded list only)',
+          bulkCancel: 'Cancel all',
+          bulkCancelConfirm: 'Cancel {count} listed tasks one by one and update business state accordingly. Proceed?',
+          bulkRunNow: 'Retry all',
+          bulkRunNowConfirm: 'Move {count} listed tasks to pending immediately; retry counters are not reset. Proceed?',
+          bulkDelete: 'Clear records',
+          bulkDeleteConfirm: 'Clear {count} listed failure records one by one without running the original tasks. Proceed?',
+          bulkProgress: 'Processing {done}/{total}…',
+          bulkResult: '{succeeded} succeeded, {failed} failed',
+          moreHint: '{count} loaded; more tasks remain in further queue pages'
+        },
         tasks: {
           title: 'Task details · {queue}',
           description: 'Inspect every task state. Scheduled and retry tasks show the next run first; other states show the newest tasks first.',

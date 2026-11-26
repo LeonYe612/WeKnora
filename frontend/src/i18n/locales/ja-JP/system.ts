@@ -194,6 +194,21 @@ export default {
           title: '{count}件の失敗したタスクに対応が必要です',
           description: '下の表で赤い「失敗」の件数を開くと原因を確認できます。原因を解消してから再試行してください。'
         },
+        console: {
+          tab: 'タスクコンソール',
+          queueFilter: 'キューで絞り込み',
+          allQueues: 'すべてのキュー',
+          bulkScope: '読み込み済みタスクのうち {count} 件が操作可能（一括操作は読み込み済み一覧のみ対象）',
+          bulkCancel: '一括キャンセル',
+          bulkCancelConfirm: '一覧の {count} 件を1件ずつキャンセルし、業務状態も同期更新します。実行しますか？',
+          bulkRunNow: '一括リトライ',
+          bulkRunNowConfirm: '一覧の {count} 件を直ちに実行待機キューへ移します。リトライ回数はリセットされません。実行しますか？',
+          bulkDelete: '記録を一括削除',
+          bulkDeleteConfirm: '一覧の {count} 件の失敗記録を1件ずつ削除します。元タスクは実行されません。実行しますか？',
+          bulkProgress: '処理中 {done}/{total}…',
+          bulkResult: '成功 {succeeded} 件、失敗 {failed} 件',
+          moreHint: '{count} 件を読み込み済み。残りはさらにキューページにあります'
+        },
         tasks: {
           title: 'タスクの詳細 · {queue}',
           description: 'すべてのタスク状態を確認できます。予約済みと再試行のタスクは次回実行が早い順、その他の状態は新しい順に表示されます。',

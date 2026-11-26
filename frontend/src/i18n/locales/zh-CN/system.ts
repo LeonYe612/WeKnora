@@ -416,6 +416,21 @@ export default {
             usage: '并发用量'
           }
         },
+        console: {
+          tab: '全局任务台',
+          queueFilter: '按队列筛选',
+          allQueues: '全部队列',
+          bulkScope: '当前已加载任务中 {count} 条可操作（批量只作用于已加载列表）',
+          bulkCancel: '一键终止',
+          bulkCancelConfirm: '将逐条终止当前列表中的 {count} 条任务，并同步更新业务状态。确认终止？',
+          bulkRunNow: '一键重试',
+          bulkRunNowConfirm: '将让当前列表中的 {count} 条任务立即进入待执行队列，重试次数不会重置。确认继续？',
+          bulkDelete: '一键清除记录',
+          bulkDeleteConfirm: '将逐条清除当前列表中的 {count} 条失败记录，不会执行原任务。确认清除？',
+          bulkProgress: '正在处理 {done}/{total}…',
+          bulkResult: '成功 {succeeded} 条，失败 {failed} 条',
+          moreHint: '已加载 {count} 条，其余任务分布在更多队列页中'
+        },
         tasks: {
           title: '任务明细 · {queue}',
           description: '查看各状态任务及其安全管理动作。定时、重试任务按最近执行时间优先，其余状态按时间倒序。',

@@ -29087,6 +29087,56 @@ paths:
       summary: Run a safe runtime task action
       tags:
       - System Admin
+  /system/admin/runtime/tasks:
+    get:
+      parameters:
+      - description: Task state
+        enum:
+        - pending
+        - active
+        - scheduled
+        - retry
+        - archived
+        - completed
+        in: query
+        name: state
+        required: true
+        type: string
+        x-agent: true
+      - description: Restrict to one queue; empty means all queues
+        in: query
+        name: queue
+        type: string
+        x-agent: true
+      - default: 20
+        description: Page size
+        in: query
+        maximum: 100
+        minimum: 1
+        name: page_size
+        type: integer
+        x-agent: true
+        x-agent-maximum: "50"
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handler.RuntimeTasksResponse'
+      summary: 跨队列查询任务（List runtime tasks across queues）
+      tags:
+      - System Admin
+      x-agent:
+        id: system_admin.list_all_tasks
+        max_items: 50
+        risk: read
+        root: tasks
+        system_admin: true
+      x-agent-hint: Lists tasks in one state across all queues, busiest queue first;
+        each task carries its queue. has_more means deeper pages exist — drill into
+        system_admin.list_tasks with the task's queue for continuation. available
+        false means unsupported. This operation cannot retry, cancel or delete tasks.
   /system/admin/settings-summary:
     get:
       description: 返回已注册的系统设置及脱敏值，可按完整设置键过滤

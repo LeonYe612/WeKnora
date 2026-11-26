@@ -10,13 +10,26 @@
 #   一旦某处调用显式写成 `-f docker-compose.yml`，本文件会被忽略 —— 那时需改成
 #   COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml 或去掉 -f。
 #
-# 与上游的差异共 3 处（逐条对应，新增差异请同步更新此注释）：
+# 与上游的差异共 5 处（逐条对应，新增差异请同步更新此注释）：
 #   1. app 挂载 docker.sock      —— 启用 Docker 沙箱（等同宿主机 root，仅私有化单机）
 #   2. app 挂载 builtin_models   —— 声明式内置模型（Embedding / Rerank）
 #   3. neo4j 端口收紧到回环      —— 上游默认对外暴露 7474/7687
+#   4. app 镜像走 ghcr 自建（digest 钉死） —— Docker Hub 的 latest 仍停在 v0.9.0，
+#      该版本只实现 MinerU 4.0 Jobs API（POST /v1/uploads），而本地 MinerU 4.2.2
+#      只提供 Tasks API（POST /v1/tasks），检测回落导致 404。v0.9.1 起才支持 Tasks
+#      （upstream commit fd207aaa4）。上游 compose 默认 ${WEKNORA_VERSION:-latest}
+#      且 .env 的 WEKNORA_VERSION 同时管 ui/docreader，故在此单点固定 app。
+#   5. frontend 镜像走 ghcr 自建（digest 钉死） —— 前端含 4 处本地二开
+#      （RuntimeTaskConsole 页 / RuntimeQueues tab / VITE_DEFAULT_GRAPH_ENABLED / i18n），
+#      不能用官方 ui 镜像。
+#   两个镜像均由 .github/workflows/build-fork-image.yml 在 main-synced 上构建并推
+#   ghcr.io/leonye612/weknora-{app,ui}:<sha7>。本机 apt 带宽只有 117-402 KB/s，
+#   本地构建 app 镜像必然超时，CI 是唯一稳定出包通道。
+#   升级流程：push main-synced → 等 CI 绿 → 把下面两个 digest 换成新 sha 的 digest。
 
 services:
   app:
+    image: ghcr.io/leonye612/weknora-app@sha256:27e2e74b9527bcd26296507a0d1d1dc8f23483245f321f402780306fca29bc8c # 2e8e91b
     build:
       # 只用于构建期：上游 Dockerfile.app 声明了 GOPROXY_ARG 但 compose 不传，
       # 空值会让 go mod download 走 proxy.golang.org（境外，实测极易卡住）。
@@ -33,3 +46,6 @@ services:
     ports: !override
       - "127.0.0.1:7474:7474"
       - "127.0.0.1:7687:7687"
+
+  frontend:
+    image: ghcr.io/leonye612/weknora-ui@sha256:0852411b98eca3aabb851d1e85aabe2ffad7f2c8e60993e4004163b6263e95c9 # 2e8e91b

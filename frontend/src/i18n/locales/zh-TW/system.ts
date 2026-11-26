@@ -428,6 +428,21 @@ export default {
             usage: '併發用量'
           }
         },
+        console: {
+          tab: '全域任務台',
+          queueFilter: '按佇列篩選',
+          allQueues: '全部佇列',
+          bulkScope: '當前已載入任務中 {count} 條可操作（批次只作用於已載入清單）',
+          bulkCancel: '一鍵終止',
+          bulkCancelConfirm: '將逐條終止當前清單中的 {count} 條任務，並同步更新業務狀態。確認終止？',
+          bulkRunNow: '一鍵重試',
+          bulkRunNowConfirm: '將讓當前清單中的 {count} 條任務立即進入待執行佇列，重試次數不會重置。確認繼續？',
+          bulkDelete: '一鍵清除記錄',
+          bulkDeleteConfirm: '將逐條清除當前清單中的 {count} 條失敗記錄，不會執行原任務。確認清除？',
+          bulkProgress: '正在處理 {done}/{total}…',
+          bulkResult: '成功 {succeeded} 條，失敗 {failed} 條',
+          moreHint: '已載入 {count} 條，其餘任務分布在更多佇列頁中'
+        },
         tasks: {
           title: '任務明細 · {queue}',
           description: '查看各狀態任務及其安全管理動作。定時、重試任務按最近執行時間優先，其餘狀態按時間倒序。',

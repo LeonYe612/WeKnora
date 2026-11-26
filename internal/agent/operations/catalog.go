@@ -739,7 +739,8 @@ func (c *Catalog) validateRead(op Operation, id, label, item string, itemType Pa
 func systemAdminReadRoute(rest string) bool {
 	switch rest {
 	case "system/admin/list", "system/admin/users", "system/admin/settings-summary",
-		"system/admin/runtime/queues", "system/admin/runtime/queues/:queue/tasks":
+		"system/admin/runtime/queues", "system/admin/runtime/queues/:queue/tasks",
+		"system/admin/runtime/tasks":
 		return true
 	default:
 		return false

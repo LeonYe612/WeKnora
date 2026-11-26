@@ -33,8 +33,14 @@
 
     <t-tabs v-model="activeView" class="rq-view-tabs">
       <t-tab-panel value="queues" :label="t('documentProgress.queueView')" />
+      <t-tab-panel value="console" :label="t('system.globalSettings.runtime.console.tab')" />
       <t-tab-panel value="documents" :label="t('documentProgress.title')" />
     </t-tabs>
+    <RuntimeTaskConsole
+      v-if="activeView === 'console'"
+      :queues="queues"
+      :refresh-token="updatedAt"
+    />
 
     <DocumentProgress
       v-if="documentsVisited"
@@ -528,6 +534,7 @@ import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import DocumentProgress from './DocumentProgress.vue'
+import RuntimeTaskConsole from './RuntimeTaskConsole.vue'
 import { mergeRuntimeTaskPage } from './runtimeTaskPagination'
 import {
   getRuntimeTasks,

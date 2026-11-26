@@ -22041,6 +22041,69 @@
                 }
             }
         },
+        "/system/admin/runtime/tasks": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "System Admin"
+                ],
+                "summary": "跨队列查询任务（List runtime tasks across queues）",
+                "parameters": [
+                    {
+                        "enum": [
+                            "pending",
+                            "active",
+                            "scheduled",
+                            "retry",
+                            "archived",
+                            "completed"
+                        ],
+                        "type": "string",
+                        "x-agent": true,
+                        "description": "Task state",
+                        "name": "state",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "x-agent": true,
+                        "description": "Restrict to one queue; empty means all queues",
+                        "name": "queue",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 20,
+                        "x-agent": true,
+                        "x-agent-maximum": "50",
+                        "description": "Page size",
+                        "name": "page_size",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.RuntimeTasksResponse"
+                        }
+                    }
+                },
+                "x-agent": {
+                    "id": "system_admin.list_all_tasks",
+                    "max_items": 50,
+                    "risk": "read",
+                    "root": "tasks",
+                    "system_admin": true
+                },
+                "x-agent-hint": "Lists tasks in one state across all queues, busiest queue first; each task carries its queue. has_more means deeper pages exist — drill into system_admin.list_tasks with the task's queue for continuation. available false means unsupported. This operation cannot retry, cancel or delete tasks."
+            }
+        },
         "/system/admin/settings-summary": {
             "get": {
                 "description": "返回已注册的系统设置及脱敏值，可按完整设置键过滤",

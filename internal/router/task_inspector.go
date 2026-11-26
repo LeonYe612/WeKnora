@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -703,6 +704,85 @@ func (a *asynqTaskInspector) ListRuntimeTasks(
 		}
 	}
 	return page, true, nil
+}
+
+// ListAllRuntimeTasks builds the cross-queue operator view: it walks every
+// known queue in descending depth of the requested state and concatenates
+// first pages until pageSize is reached. Per-queue depth comes from one
+// QueueStats pass; queues whose depth is zero are skipped without a Redis
+// list call, so a huge backlog in one queue never hides smaller queues.
+func (a *asynqTaskInspector) ListAllRuntimeTasks(
+	ctx context.Context,
+	queue string,
+	state types.RuntimeTaskState,
+	pageSize int,
+) (types.RuntimeTaskPage, bool, error) {
+	if a == nil || a.inspector == nil || a.redis == nil {
+		return types.RuntimeTaskPage{}, false, nil
+	}
+	if !state.Valid() {
+		return types.RuntimeTaskPage{}, true, fmt.Errorf("unsupported runtime task state %q", state)
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	stats, supported, err := a.QueueStats(ctx)
+	if err != nil || !supported {
+		return types.RuntimeTaskPage{}, supported, err
+	}
+	candidates := make([]types.QueueStat, 0, len(stats))
+	for _, stat := range stats {
+		if queue != "" && stat.Name != queue {
+			continue
+		}
+		if runtimeQueueStateDepth(stat, state) > 0 {
+			candidates = append(candidates, stat)
+		}
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return runtimeQueueStateDepth(candidates[i], state) > runtimeQueueStateDepth(candidates[j], state)
+	})
+	page := types.RuntimeTaskPage{Tasks: make([]types.RuntimeTaskInfo, 0, pageSize)}
+	for _, stat := range candidates {
+		if len(page.Tasks) >= pageSize {
+			page.HasMore = true
+			break
+		}
+		part, supported, err := a.ListRuntimeTasks(ctx, stat.Name, state, "", pageSize-len(page.Tasks))
+		if err != nil {
+			return types.RuntimeTaskPage{}, supported, err
+		}
+		if !supported {
+			return types.RuntimeTaskPage{}, false, nil
+		}
+		page.Tasks = append(page.Tasks, part.Tasks...)
+		if part.HasMore {
+			page.HasMore = true
+		}
+	}
+	return page, true, nil
+}
+
+func runtimeQueueStateDepth(stat types.QueueStat, state types.RuntimeTaskState) int {
+	switch state {
+	case types.RuntimeTaskPending:
+		return stat.Pending
+	case types.RuntimeTaskActive:
+		return stat.Active
+	case types.RuntimeTaskScheduled:
+		return stat.Scheduled
+	case types.RuntimeTaskRetry:
+		return stat.Retry
+	case types.RuntimeTaskArchived:
+		return stat.Archived
+	case types.RuntimeTaskCompleted:
+		return stat.Completed
+	default:
+		return 0
+	}
 }
 
 func (a *asynqTaskInspector) GetRuntimeTask(

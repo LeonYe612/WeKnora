@@ -428,6 +428,21 @@ export default {
             usage: '동시성'
           }
         },
+        console: {
+          tab: '작업 콘솔',
+          queueFilter: '큐별 필터',
+          allQueues: '모든 큐',
+          bulkScope: '불러온 작업 중 {count}개 조작 가능 (일괄 작업은 불러온 목록에만 적용)',
+          bulkCancel: '일괄 취소',
+          bulkCancelConfirm: '목록의 {count}개 작업을 하나씩 취소하고 비즈니스 상태도 동기화합니다. 진행할까요?',
+          bulkRunNow: '일괄 재시도',
+          bulkRunNowConfirm: '목록의 {count}개 작업을 즉시 대기 큐로 옮깁니다. 재시도 횟수는 초기화되지 않습니다. 진행할까요?',
+          bulkDelete: '기록 일괄 삭제',
+          bulkDeleteConfirm: '목록의 {count}개 실패 기록을 하나씩 삭제합니다. 원래 작업은 실행되지 않습니다. 진행할까요?',
+          bulkProgress: '처리 중 {done}/{total}…',
+          bulkResult: '성공 {succeeded}건, 실패 {failed}건',
+          moreHint: '{count}개 불러옴. 나머지는 추가 큐 페이지에 있습니다'
+        },
         tasks: {
           title: '작업 상세 · {queue}',
           description: '모든 작업 상태를 확인합니다. 예약 및 재시도 작업은 다음 실행 순서로, 나머지는 최신 작업부터 표시됩니다.',

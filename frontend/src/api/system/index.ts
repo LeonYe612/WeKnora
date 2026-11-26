@@ -718,6 +718,21 @@ export async function getRuntimeTasks(
   })
 }
 
+/**
+ * Cross-queue first page of one task state, busiest queue first. Each task
+ * carries its own `queue`; continue inside one queue with getRuntimeTasks.
+ * Backend: GET /api/v1/system/admin/runtime/tasks (SystemAdmin only).
+ */
+export async function getAllRuntimeTasks(
+  state: RuntimeTaskState,
+  pageSize = 50,
+  queue = '',
+): Promise<RuntimeTasksResponse> {
+  return get('/api/v1/system/admin/runtime/tasks', {
+    params: { state, page_size: pageSize, ...(queue ? { queue } : {}) },
+  })
+}
+
 export async function mutateRuntimeTask(
   queue: string,
   taskID: string,

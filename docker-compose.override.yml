@@ -17,6 +17,12 @@
 
 services:
   app:
+    build:
+      # 只用于构建期：上游 Dockerfile.app 声明了 GOPROXY_ARG 但 compose 不传，
+      # 空值会让 go mod download 走 proxy.golang.org（境外，实测极易卡住）。
+      # args 在 override 中按 key 合并，不会覆盖上游已有的 APK_MIRROR_ARG 等。
+      args:
+        - GOPROXY_ARG=${GOPROXY_ARG:-https://goproxy.cn,direct}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./config/builtin_models.yaml:/app/config/builtin_models.yaml:ro

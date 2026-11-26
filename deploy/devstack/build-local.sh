@@ -104,6 +104,7 @@ build_frontend() {
         --build-arg "NO_PROXY=localhost,127.0.0.1,docker.internal,registry.npmjs.org,registry.npmmirror.com" \
         --build-arg "NPM_REGISTRY=${NPM_REGISTRY:-}" \
         --build-arg "VITE_FRONTEND_COMMIT=$(git -C "$ROOT" rev-parse --short HEAD)" \
+        --build-arg "VITE_DEFAULT_GRAPH_ENABLED=${VITE_DEFAULT_GRAPH_ENABLED:-true}" \
         -t wechatopenai/weknora-ui:latest \
         "$ROOT/frontend"
     rm -f "$tmp"

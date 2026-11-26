@@ -48,6 +48,10 @@ ARG VITE_FRONTEND_COMMIT=unknown
 ENV VITE_FRONTEND_COMMIT=${VITE_FRONTEND_COMMIT}
 ARG VITE_BASE_PATH=/
 ENV VITE_BASE_PATH=${VITE_BASE_PATH}
+# [local] 新建知识库是否默认启用知识图谱。默认 false，与上游行为一致；
+# 部署侧需要"建库即抽图"时传 --build-arg VITE_DEFAULT_GRAPH_ENABLED=true。
+ARG VITE_DEFAULT_GRAPH_ENABLED=false
+ENV VITE_DEFAULT_GRAPH_ENABLED=${VITE_DEFAULT_GRAPH_ENABLED}
 RUN npm run build
 
 # ---------------------------------------------------------------------------

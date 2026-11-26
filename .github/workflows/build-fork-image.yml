@@ -102,5 +102,6 @@ jobs:
             ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/weknora-ui:main-synced
           build-args: |
             VITE_FRONTEND_COMMIT=${{ github.sha }}
+            VITE_DEFAULT_GRAPH_ENABLED=true
           cache-from: type=gha,scope=weknora-ui
           cache-to: type=gha,scope=weknora-ui,mode=max

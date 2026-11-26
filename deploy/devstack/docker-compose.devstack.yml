@@ -1,0 +1,178 @@
+# WeKnora 二开 dev stack（长期常驻）
+#
+# 设计约束：
+# 1. 与生产 compose 完全隔离：独立 project name(wktc)、独立容器名、独立卷、独立网络。
+#    （生产 docker-compose.yml 有 23 个硬编码 container_name，同机第二份实例必然撞名，
+#      因此这里全部用 wktc-* 前缀，且不复用生产 compose 的任何 service 名。）
+# 2. 中间件（pg/redis/neo4j）不发布宿主端口，与生产一致；需要 psql 时用 docker exec。
+# 3. 仅 tc-app / tc-frontend 对外，绑 0.0.0.0（可用 LAN IP 访问，非仅回环）。
+# 4. tc-app 额外加入生产网络 weknora_WeKnora-network，只为了解析 docreader:50051（复用生产解析服务）。
+#    该网络内也能解析生产的 postgres/redis/neo4j —— 本文件已在 environment 中把三者全部
+#    显式指向 tc-* 容器，禁止依赖默认值。
+name: wktc
+
+services:
+  tc-postgres:
+    image: paradedb/paradedb:v0.25.11-pg17
+    container_name: wktc-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: devpass
+      POSTGRES_DB: WeKnora
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - max_connections=150
+      - -c
+      - log_min_duration_statement=2000
+    volumes:
+      - tc-pgdata:/var/lib/postgresql/data
+    networks: [tc-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d WeKnora"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  tc-redis:
+    image: redis:7.0-alpine
+    container_name: wktc-redis
+    command: ["redis-server", "--requirepass", "devpass", "--appendonly", "yes"]
+    volumes:
+      - tc-redisdata:/data
+    networks: [tc-net]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "devpass", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  tc-neo4j:
+    image: neo4j:2025.10.1
+    container_name: wktc-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/devpass123
+      NEO4J_server_memory_heap_max__size: 512M
+      NEO4J_server_memory_pagecache_size: 256M
+      NEO4J_PLUGINS: '["apoc"]'
+    volumes:
+      - tc-neo4jdata:/data
+    networks: [tc-net]
+    restart: unless-stopped
+
+  tc-app:
+    build:
+      context: ../..
+      dockerfile: deploy/devstack/Dockerfile.dev
+    image: wktc/app-dev:latest
+    container_name: wktc-app
+    working_dir: /app
+    # 用轮询热重载脚本（bind mount 上 inotify 不可用，air/gowatch 均收不到事件）
+    command: ["/bin/sh", "/app/deploy/devstack/dev-run.sh"]
+    # dev 独立 env（生产 .env 的副本，仅本机保留、已被 .gitignore 的 `.*` 忽略）。
+    # 与生产解耦：在 dev 里改任何变量都不会影响生产容器重建时读到的值。
+    # 下方 environment 再覆盖全部连接目标 —— environment 优先级高于 env_file。
+    env_file:
+      - ./.env.devstack
+    environment:
+      TZ: Asia/Shanghai
+      GIN_MODE: debug
+      LOG_LEVEL: debug
+      LOG_PATH: ""
+      AUTO_MIGRATE: "true"
+      AUTO_RECOVER_DIRTY: "true"
+      # --- 数据面全部指向 tc-* ，禁止落到生产 ---
+      DB_DRIVER: postgres
+      DB_HOST: tc-postgres
+      DB_PORT: "5432"
+      DB_USER: postgres
+      DB_PASSWORD: devpass
+      DB_NAME: WeKnora
+      REDIS_ADDR: tc-redis:6379
+      REDIS_PASSWORD: devpass
+      REDIS_DB: "0"
+      REDIS_PREFIX: "stream:"
+      NEO4J_ENABLE: "true"
+      NEO4J_URI: bolt://tc-neo4j:7687
+      NEO4J_USERNAME: neo4j
+      NEO4J_PASSWORD: devpass123
+      # --- 复用生产 docreader（经 weknora_WeKnora-network 解析）---
+      DOCREADER_ADDR: docreader:50051
+      DOCREADER_TRANSPORT: grpc
+      # --- 不挂 docker.sock，沙箱能力关闭（测试任务台不需要）---
+      WEKNORA_SANDBOX_DOCKER_ENABLED: "false"
+      # dev 栈没有 langfuse-web，关闭上报避免持续重试噪音
+      LANGFUSE_ENABLED: "false"
+      APP_PORT: "8080"
+    volumes:
+      - ../..:/app
+      # dev 独立配置目录：覆盖仓库的 /app/config，避免在 dev 里改 config 影响生产
+      # （生产容器同样 bind mount 仓库的 config/config.yaml 与 builtin_models.yaml）
+      - ./config:/app/config:ro
+      - tc-gomod:/go/pkg/mod
+      - tc-gocache:/root/.cache/go-build
+      - tc-duckdb:/root/.duckdb
+      - tc-files:/data/files
+      - tc-docreader-tmp:/tmp/docreader
+    ports:
+      - "${DEVSTACK_BIND_IP:-0.0.0.0}:8081:8080"
+    depends_on:
+      tc-postgres:
+        condition: service_healthy
+      tc-redis:
+        condition: service_healthy
+    networks:
+      - tc-net
+      - prod-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 180s
+    restart: unless-stopped
+
+  tc-frontend:
+    image: docker.m.daocloud.io/library/node:22-bookworm-slim
+    container_name: wktc-frontend
+    working_dir: /app
+    command:
+      - sh
+      - -c
+      - "npm ci --no-audit --no-fund && exec npx vite --host 0.0.0.0 --port 5173"
+    environment:
+      VITE_DEV_PROXY_TARGET: http://tc-app:8080
+      # bind mount 上 chokidar 收不到事件，强制轮询（代价是少量 CPU）
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "1000"
+      CI: "true"
+    volumes:
+      - ../../frontend:/app
+      - tc-node_modules:/app/node_modules
+    ports:
+      - "${DEVSTACK_BIND_IP:-0.0.0.0}:5174:5173"
+    networks: [tc-net]
+    restart: unless-stopped
+
+networks:
+  tc-net:
+    driver: bridge
+  prod-net:
+    external: true
+    name: weknora_WeKnora-network
+
+volumes:
+  tc-pgdata:
+  tc-redisdata:
+  tc-neo4jdata:
+  tc-gomod:
+  tc-gocache:
+  tc-duckdb:
+  tc-files:
+  tc-docreader-tmp:
+  tc-node_modules:

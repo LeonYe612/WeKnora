@@ -1,0 +1,29 @@
+# 本地部署差异（生产实例）
+#
+# 为什么存在这个文件：
+#   docker-compose.yml 在上游高频变更（近 80 次提交全部触及），本地若直接改它，
+#   每次 `git merge upstream/main` 都会在部署配置上冲突。把所有本地差异挪到这里，
+#   上游文件保持原样，工作树干净，合并永不冲突。
+#
+# 加载规则：docker compose 在**未显式指定 -f** 时自动合并本文件。
+#   本机 scripts/start_all.sh 不传 -f，因此直接生效。
+#   一旦某处调用显式写成 `-f docker-compose.yml`，本文件会被忽略 —— 那时需改成
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml 或去掉 -f。
+#
+# 与上游的差异共 3 处（逐条对应，新增差异请同步更新此注释）：
+#   1. app 挂载 docker.sock      —— 启用 Docker 沙箱（等同宿主机 root，仅私有化单机）
+#   2. app 挂载 builtin_models   —— 声明式内置模型（Embedding / Rerank）
+#   3. neo4j 端口收紧到回环      —— 上游默认对外暴露 7474/7687
+
+services:
+  app:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./config/builtin_models.yaml:/app/config/builtin_models.yaml:ro
+
+  neo4j:
+    # ports 是列表，普通合并会「追加」成 4 条映射并导致端口冲突，
+    # 必须用 !override 整体替换（Compose Spec 2.24+，本机 v5.0.2 支持）。
+    ports: !override
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"

@@ -128,7 +128,7 @@ services:
       - tc-files:/data/files
       - tc-docreader-tmp:/tmp/docreader
     ports:
-      - "${DEVSTACK_BIND_IP:-0.0.0.0}:8081:8080"
+      - "${DEVSTACK_BIND_IP:-0.0.0.0}:${DEVSTACK_APP_PORT:-8081}:8080"
     depends_on:
       tc-postgres:
         condition: service_healthy
@@ -172,7 +172,7 @@ networks:
     driver: bridge
   prod-net:
     external: true
-    name: weknora_WeKnora-network
+    name: ${PROD_NETWORK_NAME:-weknora_WeKnora-network}
 
 volumes:
   tc-pgdata:

@@ -1,18 +1,92 @@
 # 二开开发与发布流程
 
-> 面向 agent / 新接手的人：本文所有命令均可直接执行，路径基于本机 `F:\WorkBuddyProjects\docker\WeKnora`。
-> 另一台机器只需把路径换成自己的 clone 位置。
+> 面向 agent / 新接手的人：本文所有命令可直接执行。
+> 文中统一用 `$REPO` 指代仓库根目录，**不出现任何硬编码绝对路径** —— 第一件事是把 `$REPO` 设成你自己的 clone 位置。
 
 ---
 
-## 0. 分支模型（2026-11-27 定）
+## 阅读前：本文按 Windows 编写，macOS 该怎么读
+
+这份文档诞生在 Windows + WSL2 + Docker Desktop 环境，部分内容和 macOS 不通用。**先读这张表，再动手**。
+
+### 一、立刻要替换的东西
+
+| 文档里出现 | Windows 含义 | macOS 怎么处理 |
+|---|---|---|
+| `$REPO` 的示例值 `F:\WorkBuddyProjects\docker\WeKnora` | 仓库根（盘符写法） | 换成 `~/code/WeKnora` 之类，例如 `export REPO=~/code/WeKnora` |
+| `/f/WorkBuddyProjects/...` | Git Bash 的盘符映射 | 不存在，用 `/Users/<you>/...` |
+| `pwsh -File xxx.ps1` | PowerShell 脚本 | macOS 无 PowerShell，见下方「Windows 专属」 |
+| `C:\Program Files\...` | 应用安装路径 | `/Applications/...` |
+| LAN IP `172.20.19.101` | 本机所在网段的固定 IP | 换成你 Mac 的 IP（`ipconfig getifaddr en0`） |
+| 防火墙规则 `dev-<端口>` | Windows 防火墙入站规则 | macOS 没有这套；Docker Desktop 默认已放行本地端口，跨机访问用 `pf` 或临时关防火墙 |
+
+### 二、必须设一次的环境变量
+
+```bash
+# Git Bash (Windows) / WSL
+export REPO=/f/WorkBuddyProjects/docker/WeKnora
+
+# macOS
+export REPO=~/code/WeKnora
+
+cd "$REPO"
+```
+后文所有命令都假设 `$REPO` 已设好。
+
+### 三、行尾（最容易踩的一脚）
+
+仓库在 Windows 上可能带着 CRLF。macOS 上执行 `.sh` 会报：
+
+```
+bash: ./xxx.sh: /bin/bash^M: bad interpreter: No such file or directory
+```
+
+处理任选一种：
+
+```bash
+# 方式 1：就地清掉 CRLF
+sed -i '' 's/\r$//' deploy/devstack/*.sh
+
+# 方式 2：让 git 按平台转换后重新取出
+git config core.autocrlf input && git rm --cached -r . && git reset --hard
+```
+
+### 四、Windows 专属内容（macOS 直接跳过）
+
+| 章节 / 内容 | 为什么 Mac 用不了 | Mac 替代做法 |
+|---|---|---|
+| 第 2 节「9p 覆盖写不同步 mtime」 | WSL2 的 9p 文件系统问题，Docker Desktop for Mac 同样有 mtime 延迟但表现不同 | 改完代码直接 `docker restart`，别指望热重载 |
+| `deploy/devstack/devstack-watch.ps1` | PowerShell 脚本 | 用 `fswatch -o src | xargs -n1 -I{} docker restart wktc-app`，或手动重启 |
+| 第 12 节「桌面入口」 | 讲的是 Chrome `--app` + `.lnk` + Windows 图标 | macOS 直接用 Chrome「另存为应用」或 `open -na "Google Chrome" --args --app=http://<host>/` |
+| release-agent 的 nssm 托管 | nssm 是 Windows 服务管理器 | macOS 用 `launchd`（plist）或 `supervisord` |
+
+### 五、macOS 反而是好事的地方
+
+- `host.docker.internal` 在 Docker Desktop for Mac 上**原生可用**，不需要额外加 `--add-host`。
+- 构建缓存和 apt 带宽问题不存在（Apple Silicon 记得把 CI 的 `platforms` 改成 `linux/arm64`，否则镜像架构不匹配）。
+
+---
+
+## 0. 目录与项目约定
+
+| 项 | 值 |
+|---|---|
+| 仓库根 | `$REPO` |
+| 唯一 remote | `origin` = `https://github.com/LeonYe612/WeKnora.git` |
+| 生产 compose 工作目录 | `$REPO` |
+| 宿主工具目录 | `$REPO/..`（与仓库平级，如 `../tools`、`../weknora-release-agent`） |
+
+`docker cp`、`pg_dump` 之类需要绝对路径时，一律写成 `"$REPO/..."`，不要写字面量。
+
+---
+
+## 1. 分支模型（2026-11-27 定）
 
 | 分支 | 谁能写 | 职责 | 规则 |
 |---|---|---|---|
 | `main` | 只有同步脚本 | 官方 `Tencent/WeKnora` 的纯净镜像 | 只允许 ff-only，禁止任何本地 commit |
 | `dev` | 你 | 唯一开发线，全部二开提交 | `git push origin dev`，正常无需 force |
 
-远端只有一个：`origin` = `https://github.com/LeonYe612/WeKnora.git`。
 官方仓库**不是** remote；任何指向 `Tencent/WeKnora` 的推送会被 `.git/hooks/pre-push` 拒绝。
 
 ### 日常（99% 的时间）
@@ -27,7 +101,8 @@ git push origin dev        # 触发 build-fork-image.yml 出镜像
 ### 吸收官方更新（决定升级基线时才做）
 
 ```bash
-bash F:/WorkBuddyProjects/docker/weknora-sync-upstream.sh   # 官方 → main → origin/main
+# 脚本在仓库的上级目录，路径随 $REPO 走
+bash "$REPO/../weknora-sync-upstream.sh"
 git switch dev
 git merge main             # 用 merge，不用 rebase
 git push origin dev
@@ -43,35 +118,37 @@ git push origin dev
 
 ---
 
-## 1. 环境拓扑
+## 2. 环境拓扑
 
-| | 生产 | 测试栈（本机） | 开发机（另一台） |
+| | 生产 | 测试栈（同机） | 开发机（另一台） |
 |---|---|---|---|
-| 前端 | `http://172.20.19.101/` (:80) | `http://172.20.19.101:5174/` | `http://<开发机IP>:5174/` |
+| 前端 | `http://$HOST/` (:80) | `http://$HOST:5174/` | `http://<开发机IP>:5174/` |
 | API | `:8080` | `:8081` | `:<端口>` |
 | 代码来源 | **镜像**（构建时 COPY） | **bind mount 实时编译** | bind mount 实时编译 |
 | 数据库 | `WeKnora-postgres` 卷 | `wktc-postgres` 卷 | 自己的一套 |
 | Compose | `docker-compose.yml` + override | `deploy/devstack/docker-compose.devstack.yml` | 同左 |
 | 项目名 | `weknora` | `wktc`（容器前缀 `wktc-`） | `wktc` |
 
+`$HOST` 指部署机的 LAN IP（Windows 侧示例为 `172.20.19.101`）。
+
 **核心事实**：生产与测试**共用同一份源码目录**。改文件只影响测试；生产必须重新构建镜像。
 
 ---
 
-## 2. 三条硬约束（踩过的坑，别再试）
+## 3. 三条硬约束（踩过的坑，别再试）
 
 | 约束 | 现象 | 应对 |
 |---|---|---|
-| 9p 覆盖写不同步 mtime | 容器内 `air` / `chokidar` / `find -newer` 看不见宿主机保存，改代码不重编译 | 手动 `docker restart wktc-app`；或常驻 `pwsh -File deploy/devstack/devstack-watch.ps1` |
+| bind mount 上 inotify/9p 不可靠 | 容器内 `air` / `chokidar` 看不见宿主机保存，改代码不重编译 | 手动 `docker restart wktc-app`；或跑文件监听脚本（Windows：`pwsh -File deploy/devstack/devstack-watch.ps1`；macOS：`fswatch`） |
 | `VITE_*` 是构建期内联 | 运行时改 `.env` 对前端无效 | 必须 `--build-arg` 传入后重新构建前端 |
-| 本机 apt 带宽 117–402 KB/s | `docker compose build app` 必然超时（runtime 阶段要 250MB+） | **app 镜像走 CI**；前端可本地构建（2 分钟） |
+| 出海带宽差（Windows 侧实测 apt 117–402 KB/s） | `docker compose build app` 必然超时（runtime 阶段要 250MB+） | **app 镜像一律走 CI**；前端可本地构建 |
 
 ---
 
-## 3. 流程 A：本机二开自测
+## 4. 流程 A：本机二开自测
 
 ```bash
-cd /f/WorkBuddyProjects/docker/WeKnora
+cd "$REPO"
 
 # 1. 起测试栈（若未运行）
 docker compose -f deploy/devstack/docker-compose.devstack.yml up -d
@@ -90,112 +167,112 @@ curl -s http://127.0.0.1:8081/health            # {"status":"ok"}
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:5174/
 ```
 
-测试数据隔离：dev 库独立（`wktc-postgres`），造队列数据用 `tools/asynq-seed`：
+测试数据隔离：dev 库独立（`wktc-postgres`），造队列数据用 `../tools/asynq-seed`：
 
 ```bash
-docker cp "F:/WorkBuddyProjects/docker/tools/asynq-seed/asynq-seed.linux" wktc-app:/tmp/
+docker cp "$REPO/../tools/asynq-seed/asynq-seed.linux" wktc-app:/tmp/
 docker exec wktc-app /tmp/asynq-seed -redis wktc-redis:6379 -password devpass -mode all -count 3
 ```
 
 ---
 
-## 4. 流程 B：跨机开发
+## 5. 流程 B：跨机开发
 
 开发机前置：Docker Desktop、Git、Go 1.26、Node 22。
 
 ```bash
 git clone https://github.com/LeonYe612/WeKnora.git
-cd WeKnora && git checkout dev
+cd WeKnora && git switch dev
+export REPO=$(pwd)
 
 # .env.devstack 被 .git/info/exclude 忽略，不随仓库走，需自己建
 cp .env.example deploy/devstack/.env.devstack
-# 至少改这几项指向本机生产机的模型服务：
-#   EMBEDDING_BASE_URL=http://172.20.19.101:7997/v1
-#   RERANK_BASE_URL=http://172.20.19.101:7997/v1
-#   OLLAMA_BASE_URL=http://172.20.19.101:11434
+# 至少改这几项指向生产机的模型服务：
+#   EMBEDDING_BASE_URL=http://$HOST:7997/v1
+#   RERANK_BASE_URL=http://$HOST:7997/v1
+#   OLLAMA_BASE_URL=http://$HOST:11434
 #   DEFAULT_GRAPH_ENABLED=true
+#   WEKNORA_DEPLOY_ENV=devstack
 
 docker compose -f deploy/devstack/docker-compose.devstack.yml up -d
 # 访问 http://<开发机IP>:5174
 ```
 
-模型服务不装在开发机，走 LAN 到 172.20.19.101（防火墙规则 `dev-7997` / `dev-11434` 已放行）。
+模型服务不装在开发机，走 LAN 到 `$HOST`（Windows 侧需防火墙放行 `dev-7997` / `dev-11434`；macOS 默认放行）。
 
-**只改前端时的省事做法**：开发机只跑 `npm run dev`（vite :5173），`vite.config.ts` 的 proxy 指向 `http://172.20.19.101:8081`。代价：改后端逻辑无效。
+**只改前端时的省事做法**：开发机只跑 `npm run dev`（vite :5173），`vite.config.ts` 的 proxy 指向 `http://$HOST:8081`。代价：改后端逻辑无效。
 
 ---
 
-## 5. 流程 C：发布到生产
+## 6. 流程 C：发布到生产
+
+> **首选走 UI 面板**：左下角账号菜单 →「发布」（仅 system admin 可见）→ 选构建 → 发布。
+> 面板自动完成 pull / 备份 / 改 digest / 重建 / 健康检查，失败自动回滚。
+> 面板依赖宿主 `release-agent`（Windows 下由 nssm 托管为 `WeKnoraReleaseAgent` 服务）。
+> 面板不可用时按 `deploy/RELEASE-RUNBOOK.md` 手工执行 —— 那份是权威，本节只列主干。
 
 ```bash
-# ── 开发机 ──
-git add -A && git commit -m "feat: ..."
+# 1. 推代码，触发 CI（约 10-30 分钟）
+cd "$REPO"
 git push origin dev
-# 自动触发 .github/workflows/build-fork-image.yml，约 20-30 分钟
-# 产物：ghcr.io/leonye612/weknora-app:<sha7> 和 weknora-ui:<sha7>
+
+# 2. 查 CI
+curl -s "https://api.github.com/repos/LeonYe612/WeKnora/actions/runs?per_page=3" \
+  | grep -oE '"head_sha": "[a-f0-9]*"|"status": "[a-z_]*"|"conclusion": "[a-z]*"'
 ```
 
-查 CI 状态（仓库 public，需带认证避免限流）：
+拿到 `<sha7>` 后：
 
-```bash
-TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill | grep '^password=' | cut -d= -f2)
-curl -s -H "Authorization: Bearer $TOKEN" \
-  "https://api.github.com/repos/LeonYe612/WeKnora/actions/runs?per_page=3" \
-  | grep -oE '"status": "[a-z_]*"|"conclusion": [a-z"]*'
-```
+- **有面板**：面板里选该构建，点发布。不用记命令。
+- **没面板**：按 `deploy/RELEASE-RUNBOOK.md` 走 8 步（pull → 取 digest → 改 override 两行 → 备份 DB → `compose up -d` → 健康检查 → 提交 digest）。
 
-```bash
-# ── 生产机（172.20.19.101）──
-SHA=<CI 的 sha7>
-docker pull ghcr.io/leonye612/weknora-app:$SHA
-docker pull ghcr.io/leonye612/weknora-ui:$SHA
-docker tag  ghcr.io/leonye612/weknora-app:$SHA wechatopenai/weknora-app:latest
-docker tag  ghcr.io/leonye612/weknora-ui:$SHA  wechatopenai/weknora-ui:latest
+**镜像固定用 digest，不要用 tag**：`dev` 是浮动 tag，会被下次构建覆盖。
 
-cd /f/WorkBuddyProjects/docker/WeKnora
-# 前后端必须一起切，否则版本错配
-docker compose up -d --force-recreate app frontend
-```
-
-镜像 package 已设 public，生产机匿名可拉，无需凭据。
-
-**若改动含数据库迁移**：先在测试栈验证，再切生产（app 启动时 `AUTO_MIGRATE=true` 自动执行）。历史上 134→137 三个迁移实测共 42ms。
+**若改动含数据库迁移**：先在测试栈验证，再切生产（app 启动自动执行迁移，`AUTO_MIGRATE=true`）。回滚镜像不会回滚 schema —— 生产发布前必须 `pg_dump`。
 
 ---
 
-## 6. 验证清单
+## 7. 验证清单
 
 | 检查项 | 命令 | 预期 |
 |---|---|---|
 | 容器健康 | `docker ps --filter name=WeKnora` | app `(healthy)` |
+| 当前版本 | `docker exec WeKnora-app grep -ac "$(git rev-parse HEAD)" /app/WeKnora` | `>0`（ldflags 已注入） |
 | 二开代码在镜像内 | `docker exec WeKnora-app grep -c "system/admin/runtime/tasks" /app/WeKnora` | `6` |
-| schema 版本 | `docker exec WeKnora-postgres psql -U postgres -d WeKnora -tAc "select version,dirty from schema_migrations"` | `137\|f` |
+| schema 版本 | `docker exec WeKnora-postgres psql -U postgres -d WeKnora -tAc "select version,dirty from schema_migrations"` | 与迁移文件数一致，`dirty=f` |
 | 前端 | `curl -o /dev/null -w "%{http_code}" http://127.0.0.1/` | `200` |
 | 任务台路由 | `curl -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/api/v1/system/admin/runtime/tasks` | `401`（未认证=路由存在） |
+| 发布面板路由 | `curl -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/api/v1/system/admin/release/status` | `401`（同上） |
 | KG 默认开关 | `docker exec WeKnora-app env \| grep DEFAULT_GRAPH` | `=true` |
 
 ---
 
-## 7. 回滚
+## 8. 回滚
+
+**首选**：面板 →「回滚上一版」，自动带出上一个成功发布的 digest。
+
+手工：
 
 ```bash
-docker tag wechatopenai/weknora-app:pre-upgrade wechatopenai/weknora-app:latest
-docker tag wechatopenai/weknora-ui:pre-upgrade  wechatopenai/weknora-ui:latest
-docker compose up -d --force-recreate app frontend
+cd "$REPO"
+# 把 docker-compose.override.yml 里 app / frontend 两行 digest 改回旧值
+docker compose up -d app frontend
 ```
+
+旧 digest 记录在 `docker-compose.override.yml` 的行尾注释（`# <sha7>`）和 release-agent 的 `state.json` 的 `previous` 字段里。
 
 **若已发生迁移**，旧镜像只认旧 schema，必须连库一起回：
 
 ```bash
-docker exec -i WeKnora-postgres pg_restore -U postgres -d WeKnora \
-  --clean --if-exists /tmp/pre_upgrade_134.dump
+docker compose stop app
+docker exec -i WeKnora-postgres pg_restore -U postgres -d WeKnora --clean --if-exists \
+  < "$REPO/../pg-dumps/weknora-pre-<sha7>.dump"
+docker compose up -d app
 ```
-
-`pre-upgrade` 锚点由 `docker tag`（app）与 `docker commit WeKnora-frontend`（ui，因为旧 tag 已被新构建覆盖）建立。
 
 ---
 
-## 8. 本地定制文件索引（合并上游时重点检查）
+## 9. 本地定制文件索引（合并上游时重点检查）
 
 | 文件 | 改动性质 |
 |---|---|
@@ -205,8 +282,10 @@ docker exec -i WeKnora-postgres pg_restore -U postgres -d WeKnora \
 | `frontend/Dockerfile` | 暴露 `ARG VITE_DEFAULT_GRAPH_ENABLED` |
 | `frontend/src/views/system/RuntimeQueues.vue` | 新增任务台 tab |
 | `frontend/src/views/system/RuntimeTaskConsole.vue` | 新增文件（任务台组件） |
-| `internal/handler/*` + `api/v1/system/admin/runtime/tasks` | 跨队列任务聚合 API |
-| `docker-compose.override.yml` | docker.sock、builtin_models 挂载、GOPROXY_ARG |
+| `internal/handler/release.go` | 发布面板后端（4 个接口，转发 release-agent） |
+| `frontend/src/components/settings/ReleasePanel.vue` | 发布面板 UI |
+| `frontend/src/components/UserMenu.vue` | GitHub 项 → 环境感知的发布入口 |
+| `docker-compose.override.yml` | docker.sock、builtin_models 挂载、GOPROXY_ARG、镜像 digest 钉死 |
 | `deploy/devstack/**` | 独立测试栈（上游无此目录） |
 | `config/builtin_models.yaml` | 声明 Embedding/Rerank，不含 gpt-4o-mini |
 | `.github/workflows/build-fork-image.yml` | fork 专用 CI（ghcr + amd64） |
@@ -215,46 +294,56 @@ docker exec -i WeKnora-postgres pg_restore -U postgres -d WeKnora \
 
 ---
 
-## 9. 相关脚本
+## 10. 相关脚本与文档
 
 | 路径 | 用途 |
 |---|---|
+| `deploy/RELEASE-RUNBOOK.md` | 发布 / 回滚的权威手工流程（含故障速查） |
 | `deploy/devstack/build-local.sh` | 本地构建（`app` / `frontend` / `all`，`SLIM=1` 精简 runtime 依赖） |
-| `deploy/devstack/devstack-watch.ps1` | 宿主机文件监听，触发容器内重编译 |
+| `deploy/devstack/devstack-watch.ps1` | 宿主机文件监听（Windows） |
 | `deploy/devstack/docker-compose.devstack.yml` | 测试栈编排 |
-| `tools/asynq-seed/` | 造任务台测试数据 |
-| `deploy/UPGRADE-RUNBOOK-v0.9.1.html` | 本次升级的一页式记录（可打印） |
+| `../weknora-sync-upstream.sh` | 拉官方更新到 `main` |
+| `../weknora-release-agent/` | 发布执行器（宿主进程，非仓库内） |
+| `../tools/asynq-seed/` | 造任务台测试数据 |
 
 ---
 
-## 10. 附录：桌面入口（Windows）
+## 11. 附录：桌面入口（Windows 专属）
 
 **不要把官方的 `cmd/desktop`（WeKnora Lite）当作"生产客户端"** —— 它是 `EDITION=lite` 单机版，走 SQLite + 本地文件，与生产的 PG/Neo4j/队列完全无关。
 
-前端**不具备 PWA 条件**（无 `manifest.json`、无 service worker、且站点是 HTTP 而非 HTTPS），所以 Chrome 永远不显示「安装应用」。
-
-可行的桌面入口，按成本排序：
+前端**不具备 PWA 条件**（无 `manifest.json`、无 service worker、站点是 HTTP），所以 Chrome 永远不显示「安装应用」。
 
 | 方式 | 做法 | 代价 |
 |---|---|---|
 | Chrome `--app` 快捷方式（推荐） | 见下 | 零改动，1 分钟 |
-| Chrome 菜单「创建快捷方式」 | ⋮ → 投递、保存和共享 → 创建快捷方式 → 勾「在窗口中打开」 | 零改动，图标用站点 favicon |
-| Wails 改造为"远程壳" | 改 `cmd/desktop/main.go`：不启动内嵌后端，`AssetServer.Handler` 直接反代到 `http://172.20.19.101:8080` | 需 Go + MinGW(gcc,CGO) + wails CLI；出真 .exe，可分发 |
-
-已创建的快捷方式（`--app` 模式，实测 Chrome 进程 +1 生效）：
+| Chrome 菜单「创建快捷方式」 | ⋮ → 投放、保存和共享 → 创建快捷方式 → 勾「在窗口中打开」 | 零改动，图标用 favicon |
+| Wails 改造为"远程壳" | 改 `cmd/desktop/main.go`：不启动内嵌后端，`AssetServer.Handler` 反代到 `http://$HOST:8080` | 需 Go + CGO 工具链 + wails CLI |
 
 ```python
-# 生成脚本（纯 Python，不依赖 COM —— PowerShell 的 WScript.Shell 会被安全策略拦截）
-import pylnk3, os
+# 生成快捷方式（纯 Python，不依赖 COM —— PowerShell 的 WScript.Shell 会被安全策略拦截）
+import os
+import pylnk3
+
+repo = os.environ['REPO']                    # 先设 export REPO=...
+chrome = os.environ.get('CHROME', r'C:\Program Files\Google\Chrome\Application\chrome.exe')
+host = os.environ.get('HOST', '127.0.0.1')
+
 pylnk3.for_file(
-    r'C:\Program Files\Google\Chrome\Application\chrome.exe',
-    lnk_name=os.path.join(os.environ['USERPROFILE'], 'Desktop', 'WeKnora.lnk'),
-    arguments='--app=http://172.20.19.101/',
-    icon_file=r'F:\WorkBuddyProjects\docker\WeKnora\deploy\assets\weknora.ico',
-    work_dir=r'C:\Program Files\Google\Chrome\Application',
+    chrome,
+    lnk_name=os.path.join(os.path.expanduser('~'), 'Desktop', 'WeKnora.lnk'),
+    arguments=f'--app=http://{host}/',
+    icon_file=os.path.join(repo, 'deploy', 'assets', 'weknora.ico'),
+    work_dir=os.path.dirname(chrome),
 )
+```
+
+macOS 等价做法（不需要 .lnk）：
+
+```bash
+open -na "Google Chrome" --args --app="http://$HOST/"
 ```
 
 图标源 `deploy/assets/weknora.ico`，由 `cmd/desktop/build/appicon.png` 转多尺寸而来。
 
-**若要做真 .exe**：注意 Wails 桌面端当前 `main.go` 会 `container.BuildContainer()` 启动内嵌 Gin + SQLite，改造要点是跳过整套后端初始化，只保留 `wails.Run()` + 反向代理，并把 `EDITION` 从 `lite` 改为通用值（否则会加载 lite 专属配置与免登录逻辑）。
+**若要做真 .exe**：Wails 桌面端当前 `main.go` 会 `container.BuildContainer()` 启动内嵌 Gin + SQLite，改造要点是跳过整套后端初始化，只保留 `wails.Run()` + 反向代理，并把 `EDITION` 从 `lite` 改为通用值。

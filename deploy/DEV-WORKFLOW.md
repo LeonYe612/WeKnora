@@ -121,12 +121,12 @@ git push origin dev
 
 | | 生产 | 测试栈（同机） | 开发机（另一台） |
 |---|---|---|---|
-| 前端 | `http://$HOST/` (:80) | `http://$HOST:5174/` | `http://<开发机IP>:5174/` |
-| API | `:8080` | `:8081` | `:<端口>` |
-| 代码来源 | **镜像**（构建时 COPY） | **bind mount 实时编译** | bind mount 实时编译 |
-| 数据库 | `WeKnora-postgres`（宿主 :5432） | `wktc-postgres`（宿主 :5433） | 自己的一套，见第 11 节 |
-| Compose | `docker-compose.yml` + override | `deploy/devstack/docker-compose.devstack.yml` | 同左 |
-| 项目名 | `weknora` | `wktc`（容器前缀 `wktc-`） | `wktc` |
+| 前端 | `http://$HOST/` (:80) | `http://$HOST:5174/` | `http://localhost:5173/`（vite 跑宿主机） |
+| API | `:8080` | `:8081` | `:8080`（Go 跑宿主机，`APP_PORT` 可改） |
+| 代码来源 | **镜像**（构建时 COPY） | **bind mount 实时编译** | 宿主机直跑（`make dev-app`，air 热重载） |
+| 数据库 | `WeKnora-postgres`（宿主 :5432） | `wktc-postgres`（宿主 :5433） | 自己的一套（`*-dev` 容器），见流程 B / 第 11 节 |
+| Compose | `docker-compose.yml` + override | `deploy/devstack/docker-compose.devstack.yml` | `docker-compose.dev.yml`（基础设施容器）+ app/前端跑宿主机 |
+| 项目名 | `weknora` | `wktc`（容器前缀 `wktc-`） | `weknora`（容器后缀 `-dev`） |
 
 `$HOST` 指部署机的 LAN IP（Windows 侧示例为 `172.20.19.101`）。
 
@@ -175,31 +175,77 @@ docker exec wktc-app /tmp/asynq-seed -redis wktc-redis:6379 -password devpass -m
 
 ---
 
-## 5. 流程 B：跨机开发
+## 5. 流程 B：本地独立开发环境（推荐，2026-11-27 定）
 
-开发机前置：Docker Desktop、Git、Go 1.26、Node 22。
+开发机（如 Mac）跑**自己的一套**：基础设施用 `docker-compose.dev.yml` 起容器（容器后缀 `-dev`），Go app 和前端直接跑宿主机。**不要**把 `deploy/devstack/` 照搬到开发机——它依赖部署机上生产栈的外部网络 `weknora_WeKnora-network`（`docker-compose.devstack.yml:170`），开发机上不存在；其 `.env.devstack` 也是部署机本地私有的生产 .env 副本，不随仓库走。
+
+开发机前置：Docker Desktop、Git、Go 1.26、Node 22（可选 `air` 热重载）。
+
+### B-1. 起自己的环境
 
 ```bash
 git clone https://github.com/LeonYe612/WeKnora.git
 cd WeKnora && git switch dev
 export REPO=$(pwd)
 
-# .env.devstack 被 .git/info/exclude 忽略，不随仓库走，需自己建
-cp .env.example deploy/devstack/.env.devstack
-# 至少改这几项指向生产机的模型服务：
+cp .env.example .env
+# .env 至少核对这几项（模型服务不装本地，走 LAN 到 $HOST）：
+#   DB_DRIVER=postgres  DB_PORT=5432  DB_USER/DB_PASSWORD/DB_NAME 与本地容器一致
+#   RETRIEVE_DRIVER=postgres        ← 向量存 PG（ParadeDB），无需 Qdrant/Milvus
+#   NEO4J_ENABLE=true
 #   EMBEDDING_BASE_URL=http://$HOST:7997/v1
 #   RERANK_BASE_URL=http://$HOST:7997/v1
 #   OLLAMA_BASE_URL=http://$HOST:11434
 #   DEFAULT_GRAPH_ENABLED=true
-#   WEKNORA_DEPLOY_ENV=devstack
 
-docker compose -f deploy/devstack/docker-compose.devstack.yml up -d
-# 访问 http://<开发机IP>:5174
+make dev-start DEV_ARGS="--neo4j --no-langfuse"   # postgres/redis/docreader + neo4j 容器
+make dev-app        # 宿主机跑 Go（scripts/dev.sh 自动把容器服务名映射到 127.0.0.1）
+make dev-frontend   # vite :5173，代理默认指向本地 :8080
 ```
 
-模型服务不装在开发机，走 LAN 到 `$HOST`（Windows 侧需防火墙放行 `dev-7997` / `dev-11434`；macOS 默认放行）。
+说明：
+- `dev.sh` 会自动把 `LOCAL_STORAGE_BASE_DIR=/data/files` 改写为仓库内 `.local-data/files`（`scripts/dev.sh:501`），Mac 上无需手动建 `/data`。
+- 101 若用 MinIO 存储（看部署机 `.env` 的 `STORAGE_TYPE`），本地加 `--minio` 并配齐 `MINIO_*`；默认 `STORAGE_TYPE=local` 则不用。
+- 想省本地资源、直接复用部署机基础设施时，`dev.sh` 支持 `DEV_REMOTE_HOST=$HOST`（`scripts/dev.sh:469`）：跳过本地容器、DB/Redis/Neo4j/docreader 全走 LAN。**代价见下方「直连共享库的三条代价」，日常开发不推荐。**
+- 只改前端的省事做法不变：只跑 `npm run dev`，`VITE_DEV_PROXY_TARGET=http://$HOST:8081` 指向测试栈。代价：改后端逻辑无效。
 
-**只改前端时的省事做法**：开发机只跑 `npm run dev`（vite :5173），`vite.config.ts` 的 proxy 指向 `http://$HOST:8081`。代价：改后端逻辑无效。
+### B-2. 导入 101 测试库的真实数据（快照，非实时）
+
+三样东西要分开搬：**PG 库（含向量）、Neo4j 图谱、原始文件**。`pg_dump` 只覆盖第一样。
+
+```powershell
+# —— 101 上（RDP / PowerShell）——
+docker exec wktc-postgres pg_dump -U postgres -d WeKnora -Fc > F:\pg-dumps\wktc-test.dump
+# 图谱（可选，不搬则本地重建或关闭图谱）：
+docker exec wktc-neo4j neo4j-admin database dump neo4j --to-path=/data
+# 原始文件（STORAGE_TYPE=local 时在 tc-files 卷；MinIO 则搬对应 bucket）：
+docker run --rm -v wktc_tc-files:/src -v F:\pg-dumps:/out alpine tar czf /out/tc-files.tgz -C /src .
+```
+
+把三个产物拷回开发机（SMB / RDP 剪贴板均可），然后：
+
+```bash
+# —— 开发机 ——
+pg_restore -h 127.0.0.1 -p 5432 -U postgres -d WeKnora --no-owner --clean --if-exists wktc-test.dump
+tar xzf tc-files.tgz -C "$REPO/.local-data/files"
+# Neo4j dump 恢复见 neo4j-admin database load（先停 neo4j 容器内库），或对文档批量重解析重建图谱
+```
+
+**不搬文件/图谱的后果**：文档列表和检索（chunks/向量在 PG）正常，但「预览原文/下载」404、图谱检索为空——都不报错，是最容易误以为迁完整的两个坑。
+
+验收：本地登录 → 目标 KB 文档数与 101 测试库一致 → 抽一篇能预览原文、能检索命中、（若搬了图谱）图谱页有数据。
+
+### B-3. 直连共享库的三条代价（选 `DEV_REMOTE_HOST` 前必读）
+
+1. **迁移互踩**：本地 app `AUTO_MIGRATE=true` 且代码比测试栈新时，会直接把共享库 schema 推前进，101 上的旧代码可能立刻报错。共用期间本地设 `AUTO_MIGRATE=false`。
+2. **双 worker 抢任务**：101 的 `wktc-app` 和本地 app 消费同一个 Redis 队列。要么停 `wktc-app`，要么本地不启 worker。
+3. **数据面不完整**：只连 PG 时图谱（Neo4j）、异步任务（Redis）、文件（101 卷/MinIO）都不在本地，功能残缺但不报错。
+
+### B-4. 与 101 测试栈的分工
+
+- 本地环境：日常开发、破坏性实验、删数据演练（如清理数据源残留）。
+- 101 测试栈：对外可访问的联调环境，走流程 A（改文件 + `docker restart wktc-app`）。
+- 两边数据独立后，「先在本地演练 → 确认清单 → 再到测试/生产执行」成为默认顺序。
 
 ---
 
@@ -298,6 +344,7 @@ docker compose up -d app
 | 路径 | 用途 |
 |---|---|
 | `deploy/RELEASE-RUNBOOK.md` | 发布 / 回滚的权威手工流程（含故障速查） |
+| `docker-compose.dev.yml` + `scripts/dev.sh`（`make dev-start/dev-app/dev-frontend`） | 开发机本地环境（流程 B），容器后缀 `-dev`，app/前端跑宿主机 |
 | `deploy/devstack/build-local.sh` | 本地构建（`app` / `frontend` / `all`，`SLIM=1` 精简 runtime 依赖） |
 | `deploy/devstack/devstack-watch.ps1` | 宿主机文件监听（Windows） |
 | `deploy/devstack/docker-compose.devstack.yml` | 测试栈编排 |
@@ -310,6 +357,8 @@ docker compose up -d app
 ## 11. 数据库连接（生产 / 测试）
 
 两套库**完全隔离**：各自独立数据卷，互不可见，共用同一个镜像 `paradedb/paradedb:v0.25.11-pg17`（PG 17 + pgvector + pg_search）。
+
+> 开发机自己的第三套库（`WeKnora-postgres-dev`，`docker-compose.dev.yml`）不在本节对照内：它只发布在本机，参数随 `.env`，见流程 B。
 
 ### 连接参数对照
 

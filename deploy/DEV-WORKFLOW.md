@@ -186,3 +186,37 @@ docker exec -i WeKnora-postgres pg_restore -U postgres -d WeKnora \
 | `deploy/devstack/docker-compose.devstack.yml` | 测试栈编排 |
 | `tools/asynq-seed/` | 造任务台测试数据 |
 | `deploy/UPGRADE-RUNBOOK-v0.9.1.html` | 本次升级的一页式记录（可打印） |
+
+---
+
+## 10. 附录：桌面入口（Windows）
+
+**不要把官方的 `cmd/desktop`（WeKnora Lite）当作"生产客户端"** —— 它是 `EDITION=lite` 单机版，走 SQLite + 本地文件，与生产的 PG/Neo4j/队列完全无关。
+
+前端**不具备 PWA 条件**（无 `manifest.json`、无 service worker、且站点是 HTTP 而非 HTTPS），所以 Chrome 永远不显示「安装应用」。
+
+可行的桌面入口，按成本排序：
+
+| 方式 | 做法 | 代价 |
+|---|---|---|
+| Chrome `--app` 快捷方式（推荐） | 见下 | 零改动，1 分钟 |
+| Chrome 菜单「创建快捷方式」 | ⋮ → 投递、保存和共享 → 创建快捷方式 → 勾「在窗口中打开」 | 零改动，图标用站点 favicon |
+| Wails 改造为"远程壳" | 改 `cmd/desktop/main.go`：不启动内嵌后端，`AssetServer.Handler` 直接反代到 `http://172.20.19.101:8080` | 需 Go + MinGW(gcc,CGO) + wails CLI；出真 .exe，可分发 |
+
+已创建的快捷方式（`--app` 模式，实测 Chrome 进程 +1 生效）：
+
+```python
+# 生成脚本（纯 Python，不依赖 COM —— PowerShell 的 WScript.Shell 会被安全策略拦截）
+import pylnk3, os
+pylnk3.for_file(
+    r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+    lnk_name=os.path.join(os.environ['USERPROFILE'], 'Desktop', 'WeKnora.lnk'),
+    arguments='--app=http://172.20.19.101/',
+    icon_file=r'F:\WorkBuddyProjects\docker\WeKnora\deploy\assets\weknora.ico',
+    work_dir=r'C:\Program Files\Google\Chrome\Application',
+)
+```
+
+图标源 `deploy/assets/weknora.ico`，由 `cmd/desktop/build/appicon.png` 转多尺寸而来。
+
+**若要做真 .exe**：注意 Wails 桌面端当前 `main.go` 会 `container.BuildContainer()` 启动内嵌 Gin + SQLite，改造要点是跳过整套后端初始化，只保留 `wails.Run()` + 反向代理，并把 `EDITION` 从 `lite` 改为通用值（否则会加载 lite 专属配置与免登录逻辑）。

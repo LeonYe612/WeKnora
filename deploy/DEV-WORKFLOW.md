@@ -186,6 +186,15 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:5174/
 
 > Mac 上如果 shell 里有 `http_proxy` / `all_proxy`（Clash 等），访问 `172.20.19.101` 这类局域网地址的 `curl` **必须加 `--noproxy '*'`**，否则拿到的是代理返回的 502 / 000，不是目标机器的响应。`127.0.0.1` 不受影响。
 
+**docreader 不在测试栈里**：`docker-compose.devstack.yml` 把 `DOCREADER_ADDR` 指到 `docreader:50051`，经 external 网络 `prod-net` 解析——那是**生产 compose 项目的 docreader 容器**。它停了，测试栈上传/解析就失败，而 app 启动时又只连一次（之后日志反复出现 `gRPC ListEngines failed: ... no children to pick from`，`/api/v1/system/parser-engines` 却照常 200，很容易漏看）。处置：
+
+```bash
+# 在生产 compose 目录里只拉起 docreader 这一个服务（不动 app/frontend/postgres）
+cd <生产 compose 目录> && docker compose up -d docreader        # Mac 本机：~/.local/share/wfgameai-weknora
+docker inspect WeKnora-docreader --format '{{.State.Status}} {{.State.Health.Status}}'   # running healthy
+bash deploy/devstack/devstack.sh restart tc-app                   # 让 app 重连（启动日志出现 Connected to docreader）
+```
+
 测试数据隔离：dev 库独立（`wktc-postgres`），造队列数据用 `../tools/asynq-seed`：
 
 ```bash

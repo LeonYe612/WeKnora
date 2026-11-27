@@ -31,6 +31,8 @@ on:
       - '**.md'
       - 'deploy/**'
       - 'website-docs/**'
+      # 发版时改 digest 只动这个文件，不该触发一次 30 分钟的镜像重建
+      - 'docker-compose.override.yml'
 
 permissions:
   contents: read

@@ -225,7 +225,34 @@ func markdownIsSparseXLSX(markdown string, fileSize int) bool {
 	if fileSize <= 0 {
 		return false
 	}
-	return len(markdown) < fileSize/1000
+	return meaningfulLen(markdown) < fileSize/1000
+}
+
+// meaningfulLen counts the characters that actually carry content, skipping the
+// scaffolding anydoc emits for empty cells and the HTML it wraps layouts in.
+//
+// A plain len() check does not work: a 43MB workbook whose sheets are all blank
+// still yields ~60KB of "|  |  |  |" and "| --- |", which clears a 1‰ threshold
+// while the real text is a few hundred characters. Measured on 诸天衍道.xlsx:
+// 60,712 raw bytes vs 3,904 meaningful ones.
+func meaningfulLen(s string) int {
+	n := 0
+	inTag := false
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == '<':
+			inTag = true
+		case c == '>':
+			inTag = false
+		case inTag:
+			// HTML tag internals are markup, not content.
+		case c == '|', c == '-', c == ' ', c == '\t', c == '\n', c == '\r':
+			// Table pipes, separator dashes and whitespace.
+		default:
+			n++
+		}
+	}
+	return n
 }
 
 // readXLSXFallback re-parses a workbook with MinerU, which reconstructs merged

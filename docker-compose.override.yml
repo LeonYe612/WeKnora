@@ -29,7 +29,7 @@
 
 services:
   app:
-    image: ghcr.io/leonye612/weknora-app@sha256:0bb0353bd0d275f1a19b44dfbac19818624713a2b45afbfa8f7254e5d3398826 # f1a9e9e
+    image: ghcr.io/leonye612/weknora-app@sha256:6949497f056028ecdc45446c85e58cd49a9b5163c912ec06df60db170fa68910 # fb7f606
     build:
       # 只用于构建期：上游 Dockerfile.app 声明了 GOPROXY_ARG 但 compose 不传，
       # 空值会让 go mod download 走 proxy.golang.org（境外，实测极易卡住）。
@@ -51,9 +51,12 @@ services:
   neo4j:
     # ports 是列表，普通合并会「追加」成 4 条映射并导致端口冲突，
     # 必须用 !override 整体替换（Compose Spec 2.24+，本机 v5.0.2 支持）。
+    # 对外开放给局域网开发机（Cypher 查询 / Bloom）。凭据见 .env 的
+    # NEO4J_USERNAME / NEO4J_PASSWORD，端口仅在有密码前提下才放行。
+    # 测试栈的 neo4j 占 7475 / 7688，两者不冲突。
     ports: !override
-      - "127.0.0.1:7474:7474"
-      - "127.0.0.1:7687:7687"
+      - "7474:7474"
+      - "7687:7687"
 
   frontend:
     image: ghcr.io/leonye612/weknora-ui@sha256:a33b6abc0177d037912234fc5eb30acb4944ebbf838ed64964f8dcaf4aab3805 # f1a9e9e

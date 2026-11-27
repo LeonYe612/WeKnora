@@ -22,10 +22,10 @@
 #   5. frontend 镜像走 ghcr 自建（digest 钉死） —— 前端含 4 处本地二开
 #      （RuntimeTaskConsole 页 / RuntimeQueues tab / VITE_DEFAULT_GRAPH_ENABLED / i18n），
 #      不能用官方 ui 镜像。
-#   两个镜像均由 .github/workflows/build-fork-image.yml 在 main-synced 上构建并推
+#   两个镜像均由 .github/workflows/build-fork-image.yml 在 dev 上构建并推
 #   ghcr.io/leonye612/weknora-{app,ui}:<sha7>。本机 apt 带宽只有 117-402 KB/s，
 #   本地构建 app 镜像必然超时，CI 是唯一稳定出包通道。
-#   升级流程：push main-synced → 等 CI 绿 → 把下面两个 digest 换成新 sha 的 digest。
+#   升级流程：push dev → 等 CI 绿 → 把下面两个 digest 换成新 sha 的 digest。
 
 services:
   app:

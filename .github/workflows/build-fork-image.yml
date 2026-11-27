@@ -26,7 +26,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - main-synced
+      - dev
     paths-ignore:
       - '**.md'
       - 'deploy/**'
@@ -68,7 +68,7 @@ jobs:
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/weknora-app:${{ steps.meta.outputs.tag }}
-            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/weknora-app:main-synced
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/weknora-app:dev
           build-args: |
             WITH_ANYDOC=1
             COMMIT_ID_ARG=${{ github.sha }}
@@ -103,7 +103,7 @@ jobs:
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/weknora-ui:${{ steps.meta.outputs.tag }}
-            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/weknora-ui:main-synced
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/weknora-ui:dev
           build-args: |
             VITE_FRONTEND_COMMIT=${{ github.sha }}
             VITE_DEFAULT_GRAPH_ENABLED=true

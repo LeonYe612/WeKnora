@@ -38,7 +38,7 @@ cd /f/WorkBuddyProjects/docker/WeKnora
 # 1. 起测试栈（若未运行）
 docker compose -f deploy/devstack/docker-compose.devstack.yml up -d
 
-# 2. 改代码（分支 main-synced）
+# 2. 改代码（分支 dev）
 
 # 3. 后端生效（约 40-60s 重编译）
 docker restart wktc-app
@@ -66,8 +66,8 @@ docker exec wktc-app /tmp/asynq-seed -redis wktc-redis:6379 -password devpass -m
 开发机前置：Docker Desktop、Git、Go 1.26、Node 22。
 
 ```bash
-git clone git@github.com:LeonYe612/WeKnora.git
-cd WeKnora && git checkout main-synced
+git clone https://github.com/LeonYe612/WeKnora.git
+cd WeKnora && git checkout dev
 
 # .env.devstack 被 .git/info/exclude 忽略，不随仓库走，需自己建
 cp .env.example deploy/devstack/.env.devstack
@@ -92,7 +92,7 @@ docker compose -f deploy/devstack/docker-compose.devstack.yml up -d
 ```bash
 # ── 开发机 ──
 git add -A && git commit -m "feat: ..."
-git push origin main-synced
+git push origin dev
 # 自动触发 .github/workflows/build-fork-image.yml，约 20-30 分钟
 # 产物：ghcr.io/leonye612/weknora-app:<sha7> 和 weknora-ui:<sha7>
 ```

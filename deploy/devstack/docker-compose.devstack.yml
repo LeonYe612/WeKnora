@@ -30,6 +30,10 @@ services:
       - log_min_duration_statement=2000
     volumes:
       - tc-pgdata:/var/lib/postgresql/data
+    # 测试库对外暴露，便于 DBeaver / psql 从局域网直连。
+    # 生产库占 5432，测试库固定 5433，避免混连。
+    ports:
+      - "5433:5432"
     networks: [tc-net]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d WeKnora"]

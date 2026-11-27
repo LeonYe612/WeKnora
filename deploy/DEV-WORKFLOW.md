@@ -57,7 +57,6 @@ git config core.autocrlf input && git rm --cached -r . && git reset --hard
 |---|---|---|
 | 第 2 节「9p 覆盖写不同步 mtime」 | WSL2 的 9p 文件系统问题，Docker Desktop for Mac 同样有 mtime 延迟但表现不同 | 改完代码直接 `docker restart`，别指望热重载 |
 | `deploy/devstack/devstack-watch.ps1` | PowerShell 脚本 | 用 `fswatch -o src | xargs -n1 -I{} docker restart wktc-app`，或手动重启 |
-| 第 12 节「桌面入口」 | 讲的是 Chrome `--app` + `.lnk` + Windows 图标 | macOS 直接用 Chrome「另存为应用」或 `open -na "Google Chrome" --args --app=http://<host>/` |
 | release-agent 的 nssm 托管 | nssm 是 Windows 服务管理器 | macOS 用 `launchd`（plist）或 `supervisord` |
 
 ### 五、macOS 反而是好事的地方
@@ -125,7 +124,7 @@ git push origin dev
 | 前端 | `http://$HOST/` (:80) | `http://$HOST:5174/` | `http://<开发机IP>:5174/` |
 | API | `:8080` | `:8081` | `:<端口>` |
 | 代码来源 | **镜像**（构建时 COPY） | **bind mount 实时编译** | bind mount 实时编译 |
-| 数据库 | `WeKnora-postgres` 卷 | `wktc-postgres` 卷 | 自己的一套 |
+| 数据库 | `WeKnora-postgres`（宿主 :5432） | `wktc-postgres`（宿主 :5433） | 自己的一套，见第 11 节 |
 | Compose | `docker-compose.yml` + override | `deploy/devstack/docker-compose.devstack.yml` | 同左 |
 | 项目名 | `weknora` | `wktc`（容器前缀 `wktc-`） | `wktc` |
 
@@ -308,42 +307,67 @@ docker compose up -d app
 
 ---
 
-## 11. 附录：桌面入口（Windows 专属）
+## 11. 数据库连接（生产 / 测试）
 
-**不要把官方的 `cmd/desktop`（WeKnora Lite）当作"生产客户端"** —— 它是 `EDITION=lite` 单机版，走 SQLite + 本地文件，与生产的 PG/Neo4j/队列完全无关。
+两套库**完全隔离**：各自独立数据卷，互不可见，共用同一个镜像 `paradedb/paradedb:v0.25.11-pg17`（PG 17 + pgvector + pg_search）。
 
-前端**不具备 PWA 条件**（无 `manifest.json`、无 service worker、站点是 HTTP），所以 Chrome 永远不显示「安装应用」。
+### 连接参数对照
 
-| 方式 | 做法 | 代价 |
+| | 生产 | 测试（devstack） |
 |---|---|---|
-| Chrome `--app` 快捷方式（推荐） | 见下 | 零改动，1 分钟 |
-| Chrome 菜单「创建快捷方式」 | ⋮ → 投放、保存和共享 → 创建快捷方式 → 勾「在窗口中打开」 | 零改动，图标用 favicon |
-| Wails 改造为"远程壳" | 改 `cmd/desktop/main.go`：不启动内嵌后端，`AssetServer.Handler` 反代到 `http://$HOST:8080` | 需 Go + CGO 工具链 + wails CLI |
+| 容器名 | `WeKnora-postgres` | `wktc-postgres` |
+| **宿主端口（局域网用这个）** | **5432** | **5433** |
+| 库名 | `WeKnora` | `WeKnora` |
+| 用户 | `postgres` | `postgres` |
+| 密码 | `.env` 的 `DB_PASSWORD`（不落文档） | `devpass` |
+| 数据卷 | `postgres-data` | `tc-pgdata` |
+| 容器内地址（app 用） | `postgres:5432` | `tc-postgres:5432` |
+| 端口声明位置 | `docker-compose.override.yml` → `postgres.ports` | `deploy/devstack/docker-compose.devstack.yml` → `tc-postgres.ports` |
 
-```python
-# 生成快捷方式（纯 Python，不依赖 COM —— PowerShell 的 WScript.Shell 会被安全策略拦截）
-import os
-import pylnk3
+### 局域网连接
 
-repo = os.environ['REPO']                    # 先设 export REPO=...
-chrome = os.environ.get('CHROME', r'C:\Program Files\Google\Chrome\Application\chrome.exe')
-host = os.environ.get('HOST', '127.0.0.1')
-
-pylnk3.for_file(
-    chrome,
-    lnk_name=os.path.join(os.path.expanduser('~'), 'Desktop', 'WeKnora.lnk'),
-    arguments=f'--app=http://{host}/',
-    icon_file=os.path.join(repo, 'deploy', 'assets', 'weknora.ico'),
-    work_dir=os.path.dirname(chrome),
-)
-```
-
-macOS 等价做法（不需要 .lnk）：
+两个端口都已发布到 `0.0.0.0`，同网段任意机器可直连。
 
 ```bash
-open -na "Google Chrome" --args --app="http://$HOST/"
+# 生产
+psql "host=$HOST port=5432 dbname=WeKnora user=postgres password=<DB_PASSWORD> sslmode=disable"
+
+# 测试
+psql "host=$HOST port=5433 dbname=WeKnora user=postgres password=devpass sslmode=disable"
 ```
 
-图标源 `deploy/assets/weknora.ico`，由 `cmd/desktop/build/appicon.png` 转多尺寸而来。
+DBeaver / JDBC：
 
-**若要做真 .exe**：Wails 桌面端当前 `main.go` 会 `container.BuildContainer()` 启动内嵌 Gin + SQLite，改造要点是跳过整套后端初始化，只保留 `wails.Run()` + 反向代理，并把 `EDITION` 从 `lite` 改为通用值。
+| 项 | 生产 | 测试 |
+|---|---|---|
+| Host | `$HOST` | `$HOST` |
+| Port | `5432` | `5433` |
+| Database | `WeKnora` | `WeKnora` |
+| Username | `postgres` | `postgres` |
+| JDBC URL | `jdbc:postgresql://$HOST:5432/WeKnora` | `jdbc:postgresql://$HOST:5433/WeKnora` |
+
+防火墙：`dev-5432` / `dev-5433`（Inbound Allow，Profile=Domain,Private）已放行。**换机器或重装系统后必须重建这两条规则**，否则端口通、连接被拒。
+
+### 三条必读
+
+1. **地址一律用 LAN IP，禁止写 `localhost` / `127.0.0.1`** —— 容器视角的 127.0.0.1 指向容器自身，且 WeKnora 的 SSRF 校验会拒回环地址。
+2. **宿主上自测自己的 LAN IP 可能不通**（NAT hairpin）。在部署机本机验证用 `127.0.0.1:5432` / `127.0.0.1:5433`；局域网其他机器才用 `$HOST`。
+3. **两库端口不同，别连错**：生产 5432、测试 5433。在对的库上做迁移/清洗才不会污染生产。
+
+### 常用核对
+
+```bash
+# 表数量（当前两库均为 90）
+docker exec WeKnora-postgres psql -U postgres -d WeKnora -tAc \
+  "select count(*) from information_schema.tables where table_schema='public'"
+
+# 迁移版本与 dirty 标记
+docker exec WeKnora-postgres psql -U postgres -d WeKnora -tAc \
+  "select version, dirty from schema_migrations"
+
+# 谁在连（排查连接泄漏）
+docker exec WeKnora-postgres psql -U postgres -d WeKnora -tAc \
+  "select usename, client_addr, count(*) from pg_stat_activity group by 1,2 order by 3 desc"
+```
+
+**改端口后必须 `docker compose up -d postgres` 重建容器**——`docker restart` 不会重新应用 `ports` 配置。

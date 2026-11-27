@@ -40,6 +40,14 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./config/builtin_models.yaml:/app/config/builtin_models.yaml:ro
 
+  postgres:
+    # 对外暴露给局域网客户端（DBeaver / psql / 数据核对脚本）。
+    # 上游 postgres 无 ports 字段，这里追加不会冲突；测试库占 5433，两者不混。
+    # 绑定 0.0.0.0 是 Docker 端口发布的默认行为，访问一律用宿主 LAN IP，
+    # 不要用 localhost / 127.0.0.1（容器视角会指向自身）。
+    ports:
+      - "5432:5432"
+
   neo4j:
     # ports 是列表，普通合并会「追加」成 4 条映射并导致端口冲突，
     # 必须用 !override 整体替换（Compose Spec 2.24+，本机 v5.0.2 支持）。

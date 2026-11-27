@@ -73,6 +73,20 @@ func (r *AnydocReader) Read(ctx context.Context, req *types.ReadRequest) (*types
 	if err != nil {
 		return nil, fmt.Errorf("anydoc conversion failed for %q: %w", req.FileName, err)
 	}
+	// [local] Sparse XLSX guard.
+	//
+	// anydoc reads cell values, so a sheet whose real table starts a few rows
+	// down yields only the sheet name: 数值总表.xlsx (13MB, 81% cell fill) came
+	// back as "## 属性投放" plus an empty grid, because rows 1-3 of that sheet
+	// are blank. Picture-only sheets fail the same way — the策划 workbooks put
+	// their tables in screenshots, so there are no cell values to read at all.
+	//
+	// A healthy workbook extract is roughly 1-5% of the file size. Below 1‰
+	// means the cells were never reached, so re-parse with MinerU, which works
+	// from the rendered layout/OCR instead of cell values.
+	if format == "xlsx" && markdownIsSparseXLSX(converted.Markdown, len(req.FileContent)) {
+		return r.readXLSXFallback(ctx, req, converted.Markdown)
+	}
 	if converted.AssetsError != nil {
 		logger.Warnf(ctx, "[anydoc] %q parsed as text but its images were dropped: %v",
 			req.FileName, converted.AssetsError)
@@ -202,6 +216,61 @@ func (r *AnydocReader) readPDFFallback(
 	if reason == "scanned_pdf" && result.Metadata["image_source_type"] == "" {
 		result.Metadata["image_source_type"] = "scanned_pdf"
 	}
+	return result, nil
+}
+
+// markdownIsSparseXLSX reports whether anydoc's workbook extract is too thin to
+// be real content. See the call site for why 1‰ of the file size is the line.
+func markdownIsSparseXLSX(markdown string, fileSize int) bool {
+	if fileSize <= 0 {
+		return false
+	}
+	return len(markdown) < fileSize/1000
+}
+
+// readXLSXFallback re-parses a workbook with MinerU, which reconstructs merged
+// cells (rowspan/colspan) and OCRs picture-only sheets. It is strictly a
+// quality upgrade: on any failure the sparse anydoc extract is returned as-is,
+// so a broken MinerU never turns a readable document into a failed one.
+func (r *AnydocReader) readXLSXFallback(
+	ctx context.Context, req *types.ReadRequest, sparse string,
+) (*types.ReadResult, error) {
+	keepSparse := func() *types.ReadResult {
+		return &types.ReadResult{
+			MarkdownContent: sparse,
+			Metadata: map[string]string{
+				"parser":        AnydocEngineName,
+				"source_format": "xlsx",
+			},
+		}
+	}
+	if !r.canFallback() {
+		return keepSparse(), nil
+	}
+
+	logger.Infof(ctx, "[anydoc] xlsx %q extract is only %d bytes for a %d byte file, retrying with mineru",
+		req.FileName, len(sparse), len(req.FileContent))
+
+	fallbackReq := *req
+	fallbackReq.ParserEngine = MinerUEngineName
+	result, err := r.fallback.Read(ctx, &fallbackReq)
+	if err != nil {
+		logger.Warnf(ctx, "[anydoc] xlsx mineru fallback failed for %q: %v (keeping the sparse extract)",
+			req.FileName, err)
+		return keepSparse(), nil
+	}
+	if result == nil || len(result.MarkdownContent) <= len(sparse) {
+		logger.Warnf(ctx, "[anydoc] xlsx mineru fallback for %q produced no more text, keeping the sparse extract",
+			req.FileName)
+		return keepSparse(), nil
+	}
+	if result.Metadata == nil {
+		result.Metadata = map[string]string{}
+	}
+	if result.Metadata["parser"] == "" {
+		result.Metadata["parser"] = MinerUEngineName
+	}
+	result.Metadata["anydoc_fallback"] = "xlsx_sparse"
 	return result, nil
 }
 

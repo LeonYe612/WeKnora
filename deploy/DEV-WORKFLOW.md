@@ -5,6 +5,44 @@
 
 ---
 
+## 0. 分支模型（2026-11-27 定）
+
+| 分支 | 谁能写 | 职责 | 规则 |
+|---|---|---|---|
+| `main` | 只有同步脚本 | 官方 `Tencent/WeKnora` 的纯净镜像 | 只允许 ff-only，禁止任何本地 commit |
+| `dev` | 你 | 唯一开发线，全部二开提交 | `git push origin dev`，正常无需 force |
+
+远端只有一个：`origin` = `https://github.com/LeonYe612/WeKnora.git`。
+官方仓库**不是** remote；任何指向 `Tencent/WeKnora` 的推送会被 `.git/hooks/pre-push` 拒绝。
+
+### 日常（99% 的时间）
+
+```bash
+git switch dev
+# 改代码
+git add -A && git commit -m "..."
+git push origin dev        # 触发 build-fork-image.yml 出镜像
+```
+
+### 吸收官方更新（决定升级基线时才做）
+
+```bash
+bash F:/WorkBuddyProjects/docker/weknora-sync-upstream.sh   # 官方 → main → origin/main
+git switch dev
+git merge main             # 用 merge，不用 rebase
+git push origin dev
+```
+
+**为什么 merge 不用 rebase**：rebase 会重写全部二开提交的 SHA，每次同步都要 `--force-with-lease`，且 CI 因 SHA 全变而重建全部镜像。merge 只多一个合并提交，SHA 稳定，出包可追溯。
+
+### 三条红线
+
+- 不在 `main` 上提交 —— 一旦有，同步脚本的 `ff-only` 会失败并报错。
+- 不用 `dev/local` 这类子路径分支名 —— 会占用 `refs/heads/dev` 命名空间，导致 `git branch -m X dev` 失败。
+- 不在 GitHub 页面向 `Tencent/WeKnora` 提 PR —— 那是向官方提交，`pre-push` 钩子管不到。
+
+---
+
 ## 1. 环境拓扑
 
 | | 生产 | 测试栈（本机） | 开发机（另一台） |

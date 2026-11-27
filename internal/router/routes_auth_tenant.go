@@ -318,6 +318,13 @@ func RegisterSystemAdminRoutes(
 		adminRoutes.POST("/model-catalog/preview", handler.PreviewModelCatalog)
 		adminRoutes.PUT("/model-catalog", handler.PublishModelCatalog)
 
+		// 发布管理：转发到宿主 release-agent（生产换镜像 digest / 回滚）。
+		// agent 未配置时返回 503，不影响其余功能。
+		adminRoutes.GET("/release/status", handler.GetReleaseStatus)
+		adminRoutes.GET("/release/candidates", handler.GetReleaseCandidates)
+		adminRoutes.POST("/release/deploy", handler.TriggerRelease)
+		adminRoutes.POST("/release/rollback", handler.RollbackRelease)
+
 		// P0: SystemAdmin role management
 		adminRoutes.POST("/promote", handler.PromoteUserToSystemAdmin)
 		adminRoutes.POST("/revoke", handler.RevokeSystemAdmin)

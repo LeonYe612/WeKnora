@@ -45,6 +45,83 @@ export interface SystemInfo {
   started_at?: string
   /** Seconds since process start. */
   uptime_seconds?: number
+  /** 部署环境：production / devstack / unknown，由 compose 注入 WEKNORA_DEPLOY_ENV。 */
+  deploy_env?: string
+}
+
+// ---------- 发布管理（生产换镜像 / 回滚，依赖宿主 release-agent） ----------
+
+export interface ReleaseImageInfo {
+  app_digest: string
+  ui_digest: string
+  sha7: string
+  at?: string
+}
+
+export interface ReleaseStep {
+  name: string
+  ok: boolean
+  detail: string
+  at: string
+}
+
+export interface ReleaseResult {
+  action: string
+  ok: boolean
+  message: string
+  started: string
+  finished: string
+  steps: ReleaseStep[] | null
+  rolled_back: boolean
+}
+
+export interface ReleaseContainer {
+  service: string
+  name: string
+  state: string
+  health: string
+  image: string
+}
+
+export interface ReleaseStatus {
+  env: string
+  busy: boolean
+  stage: string
+  current?: ReleaseImageInfo | null
+  previous?: ReleaseImageInfo | null
+  history?: ReleaseImageInfo[] | null
+  last?: ReleaseResult | null
+  containers: ReleaseContainer[] | null
+  repo_dir: string
+  at: string
+}
+
+export interface ReleaseCandidate {
+  sha7: string
+  sha: string
+  title: string
+  at: string
+  url: string
+}
+
+export function getReleaseStatus(): Promise<ReleaseStatus> {
+  return get('/api/v1/system/admin/release/status') as unknown as Promise<ReleaseStatus>
+}
+
+export function getReleaseCandidates(): Promise<{ success: boolean; data?: { candidates: ReleaseCandidate[] }; error?: string }> {
+  return get('/api/v1/system/admin/release/candidates') as unknown as Promise<{
+    success: boolean
+    data?: { candidates: ReleaseCandidate[] }
+    error?: string
+  }>
+}
+
+export function triggerRelease(sha7: string): Promise<{ started?: boolean; error?: string }> {
+  return post('/api/v1/system/admin/release/deploy', { sha7 }) as unknown as Promise<{ started?: boolean; error?: string }>
+}
+
+export function rollbackRelease(): Promise<{ started?: boolean; error?: string }> {
+  return post('/api/v1/system/admin/release/rollback', {}) as unknown as Promise<{ started?: boolean; error?: string }>
 }
 
 export interface DeploymentCapability {

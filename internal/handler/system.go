@@ -286,6 +286,9 @@ func (h *SystemHandler) emitAdminAudit(
 type GetSystemInfoResponse struct {
 	Version             string `json:"version" extensions:"x-agent"`
 	Edition             string `json:"edition" extensions:"x-agent"`
+	// DeployEnv 标识当前部署环境（production / devstack），由 compose 注入的
+	// WEKNORA_DEPLOY_ENV 决定。前端据此决定展示"发布"还是"更新"面板。
+	DeployEnv           string `json:"deploy_env,omitempty" extensions:"x-agent"`
 	CommitID            string `json:"commit_id,omitempty" extensions:"x-agent"`
 	BuildTime           string `json:"build_time,omitempty" extensions:"x-agent"`
 	GoVersion           string `json:"go_version,omitempty" extensions:"x-agent"`
@@ -382,6 +385,7 @@ func (h *SystemHandler) GetSystemInfo(c *gin.Context) {
 	response := GetSystemInfoResponse{
 		Version:             Version,
 		Edition:             Edition,
+		DeployEnv:           deployEnv(),
 		CommitID:            CommitID,
 		BuildTime:           BuildTime,
 		GoVersion:           GoVersion,

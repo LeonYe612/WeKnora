@@ -1,5 +1,6 @@
 <template>
   <div class="user-menu" :class="{ 'user-menu--collapsed': uiStore.sidebarCollapsed }" ref="menuRef">
+    <ReleasePanel v-model:visible="releaseVisible" :deploy-env="deployEnv" />
     <div class="user-bar">
     <!-- 用户按钮 -->
     <div class="user-button" data-guide="user-menu" @click="toggleMenu">
@@ -136,7 +137,16 @@
             </svg>
           </span>
         </div>
-        <div class="menu-item" :title="$t('common.githubStarTip')" @click="openGithub">
+        <div v-if="canRelease" class="menu-item" :title="releaseMenuTip" @click="openRelease">
+          <t-icon name="cloud-upload" class="menu-icon" />
+          <span class="menu-text-with-icon">
+            <span>{{ releaseMenuLabel }}</span>
+            <t-tag v-if="deployEnvLabel" size="small" variant="light" :theme="isProdEnv ? 'danger' : 'warning'">
+              {{ deployEnvLabel }}
+            </t-tag>
+          </span>
+        </div>
+        <div v-else class="menu-item" :title="$t('common.githubStarTip')" @click="openGithub">
           <t-icon name="logo-github" class="menu-icon" />
           <span class="menu-text-with-icon">
             <span>{{ $t('common.github') }}</span>
@@ -235,7 +245,9 @@ import { getRootZoom, rectToCssPx, cssViewportSize } from '@/utils/zoom'
 import { openNewUserGuide } from '@/config/contextualGuides'
 import { SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE } from '@/config/settingsAccess'
 import { docsUrl } from '@/utils/docsUrl'
-const { t } = useI18n()
+import ReleasePanel from '@/components/settings/ReleasePanel.vue'
+import { getSystemInfo } from '@/api/system'
+const { t, locale } = useI18n()
 
 const router = useRouter()
 const uiStore = useUIStore()
@@ -516,6 +528,42 @@ const openDocs = () => {
   menuVisible.value = false
   window.open(docsUrl('home'), '_blank')
 }
+
+// ---- 发布 / 更新面板（仅系统管理员可见）----
+const isZh = computed(() => String(locale.value).toLowerCase().startsWith('zh'))
+const releaseVisible = ref(false)
+const deployEnv = ref('')
+const isProdEnv = computed(() => deployEnv.value === 'production')
+const canRelease = computed(() => authStore.isSystemAdmin)
+const deployEnvLabel = computed(() => {
+  if (deployEnv.value === 'production') return isZh.value ? '生产' : 'prod'
+  if (deployEnv.value === 'devstack') return isZh.value ? '测试' : 'dev'
+  return ''
+})
+const releaseMenuLabel = computed(() => {
+  if (isProdEnv.value) return isZh.value ? '发布' : 'Release'
+  return isZh.value ? '更新' : 'Update'
+})
+const releaseMenuTip = computed(() => (isProdEnv.value
+  ? (isZh.value ? '发布构建产物到生产环境' : 'Deploy a build to production')
+  : (isZh.value ? '测试环境更新说明' : 'Devstack update')))
+
+const openRelease = () => {
+  menuVisible.value = false
+  releaseVisible.value = true
+}
+
+const loadDeployEnv = async () => {
+  if (!authStore.isSystemAdmin) return
+  try {
+    const res = (await getSystemInfo()) as unknown as { data?: { deploy_env?: string } }
+    deployEnv.value = res?.data?.deploy_env || ''
+  } catch {
+    // 环境未知时只是不显示环境标签，不阻塞任何功能
+  }
+}
+
+onMounted(loadDeployEnv)
 
 // 打开 GitHub
 const openGithub = () => {

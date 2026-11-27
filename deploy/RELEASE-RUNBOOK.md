@@ -28,7 +28,7 @@
 | compose 项目 | `weknora` | `wktc` |
 | 代码生效方式 | **镜像**（构建时 COPY 进去） | **bind mount 实时编译**（改文件即生效） |
 | 更新手段 | 换镜像 digest + `up -d` | `docker restart wktc-app` |
-| 端口 | 8080 / 80 | 8081 / 5174 |
+| 端口 | 容器内 8080（不发布到宿主）/ 前端 80，`/api/` 经 80 转发 | 8081 / 5174 |
 | 是否走 CI | 是 | 否 |
 
 **关键结论**：测试环境**不需要**走本文的镜像流程，改完代码 `docker restart wktc-app` 即可。下面 8 步只针对生产。
@@ -116,12 +116,23 @@ docker compose up -d app frontend
 ### ⑦ 验证
 
 ```bash
-curl -s http://127.0.0.1:8080/health                  # {"status":"ok"}
+# 以下在生产机上执行（8080 只在容器网内 / 生产机本地可达，局域网直连 8080 不通）
+docker exec WeKnora-app curl -fsS http://127.0.0.1:8080/health   # {"status":"ok"}
 docker logs --tail 80 WeKnora-app | grep -iE "migrat|error|panic"
-docker exec WeKnora-app printenv COMMIT_ID            # 应等于 <sha7> 对应的完整 SHA
+docker exec WeKnora-app printenv COMMIT_ID                       # 应等于 <sha7> 对应的完整 SHA
 ```
 
 人工过一遍：`http://172.20.19.101/` → 登录 → 知识库列表 → 检索一次 → 上传一个小文档。
+
+从 Mac / 局域网侧只能做只读探测（2026-11-27 实测 `:8080` 不可达）：
+
+```bash
+curl --noproxy '*' -s -o /dev/null -w "%{http_code}\n" http://172.20.19.101/                                # 200 = 前端在
+curl --noproxy '*' -s -o /dev/null -w "%{http_code}\n" http://172.20.19.101/api/v1/system/admin/release/status  # 401 = 后端在
+```
+
+- shell 里有 `http_proxy` / `all_proxy`（Clash 等）时**必须加 `--noproxy '*'`**，否则拿到的是代理的 502 / 000。
+- 不要用 `http://172.20.19.101/health`：前端 nginx 对未知路径回 SPA `index.html`，恒为 `200` + HTML，证明不了后端活着。
 
 判定：`COMMIT_ID` 与新镜像一致，日志无 migration 错误，核心链路可用。
 
@@ -133,7 +144,9 @@ git commit -m "release: 生产升级到 $SHA"
 git push origin dev
 ```
 
-`docker-compose.override.yml` 已在 CI 的 `paths-ignore` 里，这次 push **不会**触发镜像重建。
+`docker-compose.override.yml` 已在 CI 的 `paths-ignore` 里，这次 push **不会**触发镜像重建（`.github/workflows/build-fork-image.yml` 的 `paths-ignore` 还含 `**.md` 与 `deploy/**`：纯文档 / 部署脚本提交不会出镜像，发布面板里找不到对应构建是正常的）。
+
+提交前 `git remote -v` 确认只有 `origin` = fork。仓库自带的 `scripts/git-hooks/pre-push` 只跑 gofmt / vet / test / build，**不校验远端**，推错仓库没有任何钩子会拦。
 
 ---
 

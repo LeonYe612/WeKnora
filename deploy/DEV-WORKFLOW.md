@@ -86,7 +86,7 @@ git config core.autocrlf input && git rm --cached -r . && git reset --hard
 | `main` | 只有同步脚本 | 官方 `Tencent/WeKnora` 的纯净镜像 | 只允许 ff-only，禁止任何本地 commit |
 | `dev` | 你 | 唯一开发线，全部二开提交 | `git push origin dev`，正常无需 force |
 
-官方仓库**不是** remote；任何指向 `Tencent/WeKnora` 的推送会被 `.git/hooks/pre-push` 拒绝。
+官方仓库**不是** remote；`git remote -v` 只应出现 `origin` = fork。**没有钩子会拦这一步** —— 仓库自带的 `scripts/git-hooks/pre-push` 只做 gofmt / `go vet` / `go test` / `go build`（对齐 CI），不含任何远端校验；防误推靠的是「根本没配 Tencent remote」，新增 remote 前先想清楚。
 
 ### 日常（99% 的时间）
 
@@ -113,7 +113,21 @@ git push origin dev
 
 - 不在 `main` 上提交 —— 一旦有，同步脚本的 `ff-only` 会失败并报错。
 - 不用 `dev/local` 这类子路径分支名 —— 会占用 `refs/heads/dev` 命名空间，导致 `git branch -m X dev` 失败。
-- 不在 GitHub 页面向 `Tencent/WeKnora` 提 PR —— 那是向官方提交，`pre-push` 钩子管不到。
+- 不在 GitHub 页面向 `Tencent/WeKnora` 提 PR —— 那是向官方提交，本地任何钩子都管不到。
+
+### Git hooks：装哪个、为什么只能装一个
+
+`core.hooksPath` 只能指向**一个**目录，仓库里有两套互斥的钩子，别混：
+
+| 目录 | 来源 | 内容 | 装法 |
+|---|---|---|---|
+| `scripts/git-hooks/`（tracked，上游自带） | `website-docs/06-development/01-dev-guide.md` | pre-commit：空白字符 / gofmt 自动修 / 已装则跑 golangci-lint；**pre-push：对齐 CI 的 gofmt + `go vet` / `go test` / `go build`** | `./scripts/install-git-hooks.sh`（= `git config core.hooksPath scripts/git-hooks`） |
+| `.githooks/`（git-ignored，`doc_dedup_guard.py init` 部署） | WFGameAI 文档治理工具，非本仓库契约 | 只有 pre-commit：docs/deliverables 双源碰撞、文件命名、头部日期等 | `python3 scripts/doc_dedup_guard.py init` |
+
+- 推 `dev` 前想要 CI 同款检查 → 装第一套。`SKIP_HOOKS=1` 跳过一次，`HOOK_SKIP_TEST=1` 只跳 pre-push 的测试。
+- 两套不能同时生效：装第二套会把第一套顶掉（`core.hooksPath` 被改写），要换回来就重跑对应安装命令。
+- **`scripts/git-hooks/pre-push` 不校验远端**。别指望它拦「推错仓库」。
+- `scripts/test-git-hooks.sh` 由 CI（`.github/workflows/app.yml`）执行；本机改钩子后手动跑一遍。
 
 ---
 
@@ -122,7 +136,7 @@ git push origin dev
 | | 生产 | 测试栈（同机） | 开发机（另一台） |
 |---|---|---|---|
 | 前端 | `http://$HOST/` (:80) | `http://$HOST:5174/` | `http://localhost:5173/`（vite 跑宿主机） |
-| API | `:8080` | `:8081` | `:8080`（Go 跑宿主机，`APP_PORT` 可改） |
+| API | 容器内 `:8080`，**不发布到宿主**；局域网经前端 nginx `:80` 转发 `/api/` | `:8081`（Mac 本机 devstack 为 `:8091`，见第 4 节） | `:8080`（Go 跑宿主机，`APP_PORT` 可改） |
 | 代码来源 | **镜像**（构建时 COPY） | **bind mount 实时编译** | 宿主机直跑（`make dev-app`，air 热重载） |
 | 数据库 | `WeKnora-postgres`（宿主 :5432） | `wktc-postgres`（宿主 :5433） | 自己的一套（`*-dev` 容器），见流程 B / 第 11 节 |
 | 图库 | `WeKnora-neo4j`（:7474/7687） | `wktc-neo4j`（:7475/7688） | 自己的一套 `*-dev` 容器，见第 12 节 |
@@ -150,22 +164,27 @@ git push origin dev
 ```bash
 cd "$REPO"
 
-# 1. 起测试栈（若未运行）
-docker compose -f deploy/devstack/docker-compose.devstack.yml up -d
+bash deploy/devstack/devstack.sh ps                # 已在跑就跳过 up
+
+# 1. 起测试栈（若未运行；首次会构建 wktc/app-dev 镜像）
+bash deploy/devstack/devstack.sh up
 
 # 2. 改代码（分支 dev）
 
-# 3. 后端生效（约 40-60s 重编译）
-docker restart wktc-app
-docker logs -f wktc-app | grep "restarted pid="
+# 3. 后端生效：容器内 dev-run.sh 每 2s 轮询 internal/ cmd/ 下的 *.go，保存后自动重编译
+#    （整仓冷编译要几十秒到数分钟，看 build cache；编译失败会保留旧进程继续服务，日志里有 build failed）
+docker logs -f wktc-app 2>&1 | grep -E "dev-run"
+#    只改 config/ migrations/ compose 等 .go 之外的文件不会触发，手动重启：
+bash deploy/devstack/devstack.sh reload
 
-# 4. 前端生效（约 5-8s）
-docker restart wktc-frontend
+# 4. 前端：vite 1s 轮询自动生效，不用重启
 
-# 5. 验证
-curl -s http://127.0.0.1:8081/health            # {"status":"ok"}
+# 5. 验证（端口见 deploy/devstack/.env.devstack 的 DEVSTACK_APP_PORT，本机当前 8091）
+curl -s http://127.0.0.1:8091/health                # {"status":"ok"}
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:5174/
 ```
+
+> Mac 上如果 shell 里有 `http_proxy` / `all_proxy`（Clash 等），访问 `172.20.19.101` 这类局域网地址的 `curl` **必须加 `--noproxy '*'`**，否则拿到的是代理返回的 502 / 000，不是目标机器的响应。`127.0.0.1` 不受影响。
 
 测试数据隔离：dev 库独立（`wktc-postgres`），造队列数据用 `../tools/asynq-seed`：
 
@@ -289,6 +308,10 @@ curl -s "https://api.github.com/repos/LeonYe612/WeKnora/actions/runs?per_page=3"
 | 前端 | `curl -o /dev/null -w "%{http_code}" http://127.0.0.1/` | `200` |
 | 任务台路由 | `curl -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/api/v1/system/admin/runtime/tasks` | `401`（未认证=路由存在） |
 | 发布面板路由 | `curl -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/api/v1/system/admin/release/status` | `401`（同上） |
+| 局域网 / Mac 侧只读探测 | `curl --noproxy '*' -s -o /dev/null -w "%{http_code}" http://$HOST/api/v1/system/admin/release/status` | `401`（经前端 `:80` 转发；**`:8080` 从局域网不可达**，别用它判断） |
+| 局域网 / Mac 侧前端存活 | `curl --noproxy '*' -s -o /dev/null -w "%{http_code}" http://$HOST/` | `200` |
+
+> **别用 `http://$HOST/health` 判断后端存活。** 前端 nginx 的 `location /` 是 `try_files $uri $uri/ /index.html`（`frontend/nginx.conf:88-91`），任何不存在的路径都回 `200` + HTML，`/health` 也不例外（2026-11-27 实测）。后端是否在，看 `/api/...` 路由返回的 `401`；后端**版本**是否换对，看 `docker exec WeKnora-app printenv COMMIT_ID`。
 | KG 默认开关 | `docker exec WeKnora-app env \| grep DEFAULT_GRAPH` | `=true` |
 
 ---
@@ -469,7 +492,7 @@ bolt://$HOST:7688      # 测试
 | 服务 | 地址 | 凭据 | 说明 |
 |---|---|---|---|
 | **Infinity RAG** | `$HOST:7997` | `Authorization: Bearer 67b73c603d9b9474b6066a05d9fb4101f27cf92d15886849` | `bge-m3` 1024 维 + `bge-reranker-v2-m3`。key 来自容器启动参数 `--api-key`，换部署时要重新取：`docker inspect infinity-rag --format '{{json .Config.Cmd}}'` |
-| **生产 API / 前端** | `$HOST:8080` / `:80` | 用户登录 | 只读体验，不要用它跑写操作 |
+| **生产 API / 前端** | 前端 `:80`；API 只在容器内 `:8080`，局域网经 `:80` 的 `/api/` 转发 | 用户登录 | 只读体验，不要用它跑写操作 |
 | **生产 PG** | `$HOST:5432` | `.env` 的 `DB_PASSWORD` | **只读** |
 | **生产 Neo4j** | `$HOST:7474/7687` | `.env` 的 `NEO4J_PASSWORD` | **只读** |
 | **config-sync MCP** | `$HOST:8090` / `:8091` | `MCP_AUTH_TOKEN`（`docker exec weknora-config-sync-mcp printenv MCP_AUTH_TOKEN`） | 绑的是 LAN IP，本机用 `127.0.0.1` 连不上属正常 |

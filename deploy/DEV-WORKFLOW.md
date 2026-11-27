@@ -275,6 +275,7 @@ tar xzf tc-files.tgz -C "$REPO/.local-data/files"
 > 面板自动完成 pull / 备份 / 改 digest / 重建 / 健康检查，失败自动回滚。
 > 面板依赖宿主 `release-agent`（Windows 下由 nssm 托管为 `WeKnoraReleaseAgent` 服务）。
 > 面板不可用时按 `deploy/RELEASE-RUNBOOK.md` 手工执行 —— 那份是权威，本节只列主干。
+> 从 Mac 上操作的全流程（前置验证 / 装钩子 / 推送 / 只读验证 / 代理陷阱）见 `deploy/MAC-RELEASE-GUIDE.md`。
 
 ```bash
 # 1. 推代码，触发 CI（约 10-30 分钟）

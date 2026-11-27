@@ -29,7 +29,7 @@
 
 services:
   app:
-    image: ghcr.io/leonye612/weknora-app@sha256:27e2e74b9527bcd26296507a0d1d1dc8f23483245f321f402780306fca29bc8c # 2e8e91b
+    image: ghcr.io/leonye612/weknora-app@sha256:0bb0353bd0d275f1a19b44dfbac19818624713a2b45afbfa8f7254e5d3398826 # f1a9e9e
     build:
       # 只用于构建期：上游 Dockerfile.app 声明了 GOPROXY_ARG 但 compose 不传，
       # 空值会让 go mod download 走 proxy.golang.org（境外，实测极易卡住）。
@@ -48,4 +48,4 @@ services:
       - "127.0.0.1:7687:7687"
 
   frontend:
-    image: ghcr.io/leonye612/weknora-ui@sha256:0852411b98eca3aabb851d1e85aabe2ffad7f2c8e60993e4004163b6263e95c9 # 2e8e91b
+    image: ghcr.io/leonye612/weknora-ui@sha256:a33b6abc0177d037912234fc5eb30acb4944ebbf838ed64964f8dcaf4aab3805 # f1a9e9e

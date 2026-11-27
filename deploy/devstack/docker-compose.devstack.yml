@@ -66,6 +66,10 @@ services:
       NEO4J_PLUGINS: '["apoc"]'
     volumes:
       - tc-neo4jdata:/data
+    # 对外暴露供开发机连（生产 neo4j 占 7474/7687，这里错开）
+    ports:
+      - "7475:7474"
+      - "7688:7687"
     networks: [tc-net]
     restart: unless-stopped
 

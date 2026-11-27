@@ -125,6 +125,7 @@ git push origin dev
 | API | `:8080` | `:8081` | `:<端口>` |
 | 代码来源 | **镜像**（构建时 COPY） | **bind mount 实时编译** | bind mount 实时编译 |
 | 数据库 | `WeKnora-postgres`（宿主 :5432） | `wktc-postgres`（宿主 :5433） | 自己的一套，见第 11 节 |
+| 图库 | `WeKnora-neo4j`（:7474/7687） | `wktc-neo4j`（:7475/7688） | 见第 12 节 |
 | Compose | `docker-compose.yml` + override | `deploy/devstack/docker-compose.devstack.yml` | 同左 |
 | 项目名 | `weknora` | `wktc`（容器前缀 `wktc-`） | `wktc` |
 
@@ -371,3 +372,95 @@ docker exec WeKnora-postgres psql -U postgres -d WeKnora -tAc \
 ```
 
 **改端口后必须 `docker compose up -d postgres` 重建容器**——`docker restart` 不会重新应用 `ports` 配置。
+
+---
+
+## 12. 其他中间件：开发机能用什么
+
+判断依据：**容器监听 `0.0.0.0` + 防火墙 `dev-<端口>` 放行** = 局域网可达。
+部署机自测用 `127.0.0.1`（LAN IP 撞 hairpin 返回 000），其他机器一律用 `$HOST`。
+
+### Neo4j（图数据库）
+
+| | 生产 | 测试（devstack） |
+|---|---|---|
+| 容器 | `WeKnora-neo4j` | `wktc-neo4j` |
+| **宿主端口** | **7474**(HTTP) / **7687**(Bolt) | **7475** / **7688** |
+| 用户 | `neo4j` | `neo4j` |
+| 密码 | `.env` 的 `NEO4J_PASSWORD` | `devpass123` |
+| 端口声明 | `docker-compose.override.yml` → `neo4j.ports`（`!override` 整体替换） | devstack compose → `tc-neo4j.ports` |
+
+```bash
+# HTTP 事务接口（不需要装 cypher-shell）
+curl -u "neo4j:$NEO4J_PASSWORD" -H "Content-Type: application/json" \
+  -X POST http://$HOST:7474/db/neo4j/tx \
+  -d '{"statements":[{"statement":"MATCH (n) RETURN count(n)"}]}'
+
+# Bolt（Neo4j Browser / Bloom / 驱动）
+bolt://$HOST:7687      # 生产
+bolt://$HOST:7688      # 测试
+```
+
+当前生产图库 3190 个节点。**生产图库只读**，写入会污染知识图谱实体。
+
+### 开箱即用（无鉴权 / 公开凭据）
+
+| 服务 | 地址 | 能力 | 备注 |
+|---|---|---|---|
+| **Ollama** | `$HOST:11434` | `qwen3.5:9b`(6.6G)、`tev1:latest`(4.6G) | `GET /api/tags` 列模型 |
+| **Qdrant**（test 实例） | `$HOST:6335` REST / `6336` gRPC | 8 个 collection | 含 `sixlines-project-knowledgebase-WeKnora` 等真实数据 |
+| **SearXNG** | `$HOST:8888` | 联网搜索 | `?format=json` 已开启，返回 JSON |
+| **MinerU** | `$HOST:8000` | 文档解析 | 4.x 只有 Tasks API：`POST /v1/tasks`；`/docs` 有 Swagger |
+| **测试前端** | `$HOST:5174` | 改代码即生效 | |
+| **测试 API** | `$HOST:8081` | 接口调试 | |
+| **测试 PG** | `$HOST:5433` | 自由读写 | 见第 11 节 |
+
+### 需要凭据
+
+| 服务 | 地址 | 凭据 | 说明 |
+|---|---|---|---|
+| **Infinity RAG** | `$HOST:7997` | `Authorization: Bearer 67b73c603d9b9474b6066a05d9fb4101f27cf92d15886849` | `bge-m3` 1024 维 + `bge-reranker-v2-m3`。key 来自容器启动参数 `--api-key`，换部署时要重新取：`docker inspect infinity-rag --format '{{json .Config.Cmd}}'` |
+| **生产 API / 前端** | `$HOST:8080` / `:80` | 用户登录 | 只读体验，不要用它跑写操作 |
+| **生产 PG** | `$HOST:5432` | `.env` 的 `DB_PASSWORD` | **只读** |
+| **生产 Neo4j** | `$HOST:7474/7687` | `.env` 的 `NEO4J_PASSWORD` | **只读** |
+| **config-sync MCP** | `$HOST:8090` / `:8091` | `MCP_AUTH_TOKEN`（`docker exec weknora-config-sync-mcp printenv MCP_AUTH_TOKEN`） | 绑的是 LAN IP，本机用 `127.0.0.1` 连不上属正常 |
+
+### 局域网拿不到
+
+| 服务 | 原因 | 要用的话 |
+|---|---|---|
+| Redis（生产 / 测试） | 无宿主端口映射 | 不建议开：测试库 `devpass` 裸奔，生产虽有密码但属数据面 |
+| docreader | 仅容器网内 `50051` | 通过 app 间接使用 |
+| searxng-valkey | 仅容器网内 | 同上 |
+
+### 开发机 `.env.devstack` 必填
+
+```bash
+EMBEDDING_BASE_URL=http://$HOST:7997/v1     # Infinity，provider 里还要填 api_key
+RERANK_BASE_URL=http://$HOST:7997/v1
+OLLAMA_BASE_URL=http://$HOST:11434
+WEKNORA_DEPLOY_ENV=devstack
+```
+
+### 连通性自检（开发机上跑）
+
+```bash
+curl -s http://$HOST:11434/api/tags | head -c 200
+curl -s -H "Authorization: Bearer 67b73c603d9b9474b6066a05d9fb4101f27cf92d15886849" \
+  -X POST http://$HOST:7997/embeddings -H "Content-Type: application/json" \
+  -d '{"model":"BAAI/bge-m3","input":["x"]}' | head -c 120
+curl -s "http://$HOST:8888/search?q=test&format=json" | head -c 120
+curl -s -o /dev/null -w "%{http_code}\n" http://$HOST:8000/docs
+curl -s http://$HOST:6335/collections | head -c 200
+curl -s -u "neo4j:$NEO4J_PASSWORD" -o /dev/null -w "%{http_code}\n" http://$HOST:7474/
+```
+
+### 端口分配总表（避免混连）
+
+| 服务 | 生产 | 测试 |
+|---|---|---|
+| 前端 | 80 | 5174 |
+| API | 8080 | 8081 |
+| PostgreSQL | 5432 | 5433 |
+| Neo4j HTTP | 7474 | 7475 |
+| Neo4j Bolt | 7687 | 7688 |
